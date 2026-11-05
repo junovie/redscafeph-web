@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .btn-outline {
+    @apply inline-flex items-center justify-center border border-white px-6 py-2.5 text-sm tracking-wide text-white transition-colors hover:bg-white hover:text-black;
+  }
+  .btn-solid {
+    @apply inline-flex items-center justify-center bg-red-brand px-6 py-2.5 text-sm font-medium tracking-wide text-white transition-colors hover:bg-white hover:text-black;
+  }
+  .section-title {
+    @apply font-heading text-4xl font-light sm:text-5xl md:text-6xl;
+  }
+}

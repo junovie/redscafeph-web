@@ -1,0 +1,4 @@
+/general-5 /reviews 301
+/category/all-products /rewards 301
+/product-page/* /rewards 301
+/home / 301
