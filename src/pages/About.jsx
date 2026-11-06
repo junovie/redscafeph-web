@@ -1,3 +1,4 @@
+import Heading from "@/components/Heading";
 import SocialIcons from "@/components/SocialIcons";
 import { EMAILS, SOCIALS } from "@/data/site";
 
@@ -6,9 +7,9 @@ export default function About() {
     <>
       <section className="grid md:grid-cols-2">
         <img src="/images/storefront-day.webp" alt="Red's Cafe storefront" className="h-96 w-full object-cover md:h-auto" />
-        <div className="px-8 py-16 md:px-16 lg:px-20">
-          <h1 className="section-title">Our Story</h1>
-          <div className="mt-8 space-y-6 leading-relaxed text-neutral-200">
+        <div className="px-6 py-16 md:px-16 md:py-24 lg:px-20">
+          <Heading as="h1" eyebrow="This is us" title="Our Story" />
+          <div className="lead mt-8 space-y-6">
             <p>
               We opened a tiny cafe at Raintree Mall early 2023 by the end of covid era. A lot of establishments were closing one by one at the
               time while everyone else was moving on. Everything was a challenge on our first few months. Then came our first loyal customers.
@@ -28,10 +29,11 @@ export default function About() {
           </div>
         </div>
       </section>
-      <section className="grid md:grid-cols-2">
-        <div className="px-8 py-16 md:order-1 md:px-16 lg:px-20">
-          <h2 className="section-title">You can reach out and say hello @</h2>
-          <ul className="mt-8 space-y-2">
+      <section className="grid border-t border-white/10 bg-coal md:grid-cols-2">
+        <div className="px-6 py-16 md:order-1 md:px-16 md:py-24 lg:px-20">
+          <Heading eyebrow="Say hello" title="You can reach out and say hello @" />
+          <p className="label mt-10">Email</p>
+          <ul className="space-y-2">
             {EMAILS.map((e) => (
               <li key={e}>
                 <a href={`mailto:${e}`} className="hover:text-red-brand">
@@ -39,6 +41,9 @@ export default function About() {
                 </a>
               </li>
             ))}
+          </ul>
+          <p className="label mt-8">Social</p>
+          <ul className="space-y-2">
             {SOCIALS.map((s) => (
               <li key={s.name}>
                 <a href={s.href} target="_blank" rel="noreferrer" className="hover:text-red-brand">

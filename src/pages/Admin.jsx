@@ -43,9 +43,9 @@ function Login({ onLogin, error }) {
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder="Admin password"
-        className="w-full border border-white/20 bg-black px-4 py-3 focus:border-red-brand focus:outline-none"
+        className="w-full border border-white/20 bg-ink px-4 py-3 focus:border-red-brand focus:outline-none"
       />
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-sm text-red-brand">{error}</p>}
       <button className="btn-solid w-full">Log in</button>
     </form>
   );
@@ -75,22 +75,22 @@ function ReviewRow({ review, api, reload }) {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-medium">{review.name}</span>
         <Stars value={review.rating} />
-        <span className="text-sm text-neutral-500">
+        <span className="text-sm text-paper/50">
           {new Date(review.created_at).toLocaleString("en-PH")}
           {review.location && ` · ${review.location}`}
         </span>
       </div>
       {review.comment ? (
-        <p className="whitespace-pre-line text-neutral-200">{review.comment}</p>
+        <p className="whitespace-pre-line text-paper/85">{review.comment}</p>
       ) : (
-        <p className="text-sm italic text-neutral-500">No comment, rating only</p>
+        <p className="text-sm italic text-paper/50">No comment, rating only</p>
       )}
       <textarea
         rows={2}
         value={reply}
         onChange={(e) => setReply(e.target.value)}
         placeholder="Public reply from Red's Cafe (optional)"
-        className="w-full border border-white/15 bg-black px-3 py-2 text-sm focus:border-red-brand focus:outline-none"
+        className="w-full border border-white/15 bg-ink px-3 py-2 text-sm focus:border-red-brand focus:outline-none"
       />
       <div className="flex flex-wrap gap-2 text-sm">
         {review.status !== "approved" && (
@@ -108,7 +108,7 @@ function ReviewRow({ review, api, reload }) {
             Save reply
           </button>
         )}
-        <button disabled={busy} onClick={remove} className="px-4 py-2 text-neutral-400 hover:text-red-400">
+        <button disabled={busy} onClick={remove} className="px-4 py-2 text-paper/60 hover:text-red-brand">
           Delete
         </button>
       </div>
@@ -160,7 +160,7 @@ export default function Admin() {
     <div className="mx-auto max-w-4xl px-6 py-12">
       <div className="flex items-center justify-between">
         <h1 className="font-heading text-3xl">Reviews admin</h1>
-        <button onClick={logout} className="text-sm text-neutral-400 hover:text-white">
+        <button onClick={logout} className="text-sm text-paper/60 hover:text-paper">
           Log out
         </button>
       </div>
@@ -176,7 +176,7 @@ export default function Admin() {
         ))}
       </div>
       <div className="mt-8 space-y-4">
-        {shown.length === 0 && <p className="text-neutral-400">Nothing here.</p>}
+        {shown.length === 0 && <p className="text-paper/60">Nothing here.</p>}
         {shown.map((r) => (
           <ReviewRow key={`${r.id}-${r.status}-${r.reply}`} review={r} api={api} reload={reload} />
         ))}

@@ -3,13 +3,34 @@
 @tailwind utilities;
 
 @layer components {
-  .btn-outline {
-    @apply inline-flex items-center justify-center border border-white px-6 py-2.5 text-sm tracking-wide text-white transition-colors hover:bg-white hover:text-black;
+  .container-page {
+    @apply mx-auto w-full max-w-6xl px-6;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center px-7 py-3 font-display text-sm uppercase tracking-[0.18em] transition-colors disabled:opacity-60;
   }
   .btn-solid {
-    @apply inline-flex items-center justify-center bg-red-brand px-6 py-2.5 text-sm font-medium tracking-wide text-white transition-colors hover:bg-white hover:text-black;
+    @apply btn bg-red-brand text-white hover:bg-red-deep;
+  }
+  .btn-outline {
+    @apply btn border border-cream/70 text-cream hover:bg-cream hover:text-ink;
+  }
+  .eyebrow {
+    @apply font-script text-2xl text-red-brand sm:text-3xl;
   }
   .section-title {
-    @apply font-heading text-4xl font-light sm:text-5xl md:text-6xl;
+    @apply font-display text-4xl font-medium uppercase leading-[1.05] tracking-wide text-paper sm:text-5xl md:text-6xl;
+  }
+  .lead {
+    @apply leading-relaxed text-paper/75;
+  }
+  .card {
+    @apply border border-white/10 bg-coal;
+  }
+  .field {
+    @apply w-full border border-white/15 bg-ink px-4 py-3 text-paper placeholder:text-paper/40 focus:border-red-brand focus:outline-none;
+  }
+  .label {
+    @apply mb-2 block font-display text-xs uppercase tracking-[0.2em] text-cream;
   }
 }
