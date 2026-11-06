@@ -1,5 +1,4 @@
 const LOCATIONS = ["Red's Cafe", "Red's Cafe Too", "Also Red's Cafe"];
-const STATUSES = ["pending", "approved", "hidden"];
 const MAX_PER_HOUR = 3;
 
 const json = (data, status = 200) =>
@@ -11,15 +10,6 @@ const json = (data, status = 200) =>
 async function sha256(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-async function isAdmin(request, env) {
-  const given = (request.headers.get("authorization") || "").replace(/^Bearer /, "");
-  if (!env.ADMIN_PASSWORD || !given) return false;
-  const [a, b] = await Promise.all([sha256(given), sha256(env.ADMIN_PASSWORD)]);
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
 }
 
 const clean = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -75,7 +65,7 @@ async function submit(request, env) {
   if (!name) return json({ error: "Please enter your name." }, 400);
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) return json({ error: "Please pick a star rating." }, 400);
 
-  const ipHash = await sha256(`${request.headers.get("cf-connecting-ip") || "local"}:${env.ADMIN_PASSWORD || ""}`);
+  const ipHash = await sha256(`${request.headers.get("cf-connecting-ip") || "local"}:${env.SUPABASE_SERVICE_ROLE_KEY}`);
   const since = new Date(Date.now() - 3600_000).toISOString();
   const recent = await count(env, `reviews?select=id&ip_hash=eq.${ipHash}&created_at=gt.${encodeURIComponent(since)}`);
   if (recent >= MAX_PER_HOUR) return json({ error: "Thanks! You've sent a few already. Please try again later." }, 429);
@@ -88,32 +78,6 @@ async function submit(request, env) {
   return json({ ok: true }, 201);
 }
 
-async function admin(request, env, path) {
-  if (!(await isAdmin(request, env))) return json({ error: "Wrong password" }, 401);
-  if (path === "/api/admin/reviews" && request.method === "GET") {
-    const reviews = await rows(env, "reviews?select=id,name,location,rating,comment,status,reply,created_at&order=created_at.desc&limit=500");
-    return json({ reviews });
-  }
-  const id = Number(path.match(/^\/api\/admin\/reviews\/(\d+)$/)?.[1]);
-  if (!id) return json({ error: "Not found" }, 404);
-  if (request.method === "DELETE") {
-    await db(env, `reviews?id=eq.${id}`, { method: "DELETE" });
-    return json({ ok: true });
-  }
-  if (request.method === "PATCH") {
-    const body = await request.json().catch(() => ({}));
-    const patch = {};
-    if (body.status !== undefined) {
-      if (!STATUSES.includes(body.status)) return json({ error: "Invalid status" }, 400);
-      patch.status = body.status;
-    }
-    if (body.reply !== undefined) patch.reply = String(body.reply).trim().slice(0, 1500);
-    if (Object.keys(patch).length) await db(env, `reviews?id=eq.${id}`, { method: "PATCH", body: patch });
-    return json({ ok: true });
-  }
-  return json({ error: "Method not allowed" }, 405);
-}
-
 export default {
   async fetch(request, env) {
     const { pathname } = new URL(request.url);
@@ -123,7 +87,6 @@ export default {
         if (request.method === "POST") return await submit(request, env);
         return json({ error: "Method not allowed" }, 405);
       }
-      if (pathname.startsWith("/api/admin/")) return await admin(request, env, pathname);
       if (pathname.startsWith("/api/")) return json({ error: "Not found" }, 404);
     } catch (err) {
       console.error(err);
