@@ -10,6 +10,6 @@
     "run_worker_first": ["/api/*"]
   },
   "vars": {
-    "SUPABASE_URL": "https://gjlowgdezdnyjqolrwad.supabase.co"
+    "SUPABASE_URL": "https://psrtuqwrmnfqszazhnjx.supabase.co"
   }
 }
