@@ -24,14 +24,40 @@ async function isAdmin(request, env) {
 
 const clean = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
+// Reviews live in Supabase (schema redscafeweb), reached through PostgREST with the service role key.
+async function db(env, path, { method = "GET", body, headers = {} } = {}) {
+  const key = env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!env.SUPABASE_URL || !key) throw new Error("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set");
+  const res = await fetch(`${env.SUPABASE_URL.replace(/\/$/, "")}/rest/v1/${path}`, {
+    method,
+    headers: {
+      apikey: key,
+      ...(key.startsWith("eyJ") ? { authorization: `Bearer ${key}` } : {}),
+      "accept-profile": "redscafeweb",
+      "content-profile": "redscafeweb",
+      "content-type": "application/json",
+      ...headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Supabase ${method} ${path.split("?")[0]}: ${res.status} ${await res.text()}`);
+  return res;
+}
+
+const rows = async (env, path) => (await db(env, path)).json();
+
+async function count(env, path) {
+  const res = await db(env, path, { method: "HEAD", headers: { prefer: "count=exact" } });
+  return Number(res.headers.get("content-range")?.split("/")[1] || 0);
+}
+
 async function listPublic(env) {
-  const { results } = await env.DB.prepare(
-    "SELECT id, name, location, rating, comment, reply, created_at FROM reviews WHERE status = 'approved' ORDER BY created_at DESC LIMIT 200",
-  ).all();
-  const stats = await env.DB.prepare(
-    "SELECT COUNT(*) AS count, AVG(rating) AS average FROM reviews WHERE status = 'approved'",
-  ).first();
-  return json({ reviews: results, count: stats.count, average: stats.average });
+  const [reviews, ratings] = await Promise.all([
+    rows(env, "reviews?select=id,name,location,rating,comment,reply,created_at&status=eq.approved&order=created_at.desc&limit=200"),
+    rows(env, "reviews?select=rating&status=eq.approved"),
+  ]);
+  const average = ratings.length ? ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length : null;
+  return json({ reviews, count: ratings.length, average });
 }
 
 async function submit(request, env) {
@@ -50,44 +76,39 @@ async function submit(request, env) {
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) return json({ error: "Please pick a star rating." }, 400);
 
   const ipHash = await sha256(`${request.headers.get("cf-connecting-ip") || "local"}:${env.ADMIN_PASSWORD || ""}`);
-  const recent = await env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM reviews WHERE ip_hash = ? AND created_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour')",
-  )
-    .bind(ipHash)
-    .first();
-  if (recent.n >= MAX_PER_HOUR) return json({ error: "Thanks! You've sent a few already. Please try again later." }, 429);
+  const since = new Date(Date.now() - 3600_000).toISOString();
+  const recent = await count(env, `reviews?select=id&ip_hash=eq.${ipHash}&created_at=gt.${encodeURIComponent(since)}`);
+  if (recent >= MAX_PER_HOUR) return json({ error: "Thanks! You've sent a few already. Please try again later." }, 429);
 
-  await env.DB.prepare("INSERT INTO reviews (name, location, rating, comment, ip_hash) VALUES (?, ?, ?, ?, ?)")
-    .bind(name, location, rating, comment, ipHash)
-    .run();
+  await db(env, "reviews", {
+    method: "POST",
+    body: { name, location, rating, comment, ip_hash: ipHash },
+    headers: { prefer: "return=minimal" },
+  });
   return json({ ok: true }, 201);
 }
 
 async function admin(request, env, path) {
   if (!(await isAdmin(request, env))) return json({ error: "Wrong password" }, 401);
   if (path === "/api/admin/reviews" && request.method === "GET") {
-    const { results } = await env.DB.prepare(
-      "SELECT id, name, location, rating, comment, status, reply, created_at FROM reviews ORDER BY created_at DESC LIMIT 500",
-    ).all();
-    return json({ reviews: results });
+    const reviews = await rows(env, "reviews?select=id,name,location,rating,comment,status,reply,created_at&order=created_at.desc&limit=500");
+    return json({ reviews });
   }
   const id = Number(path.match(/^\/api\/admin\/reviews\/(\d+)$/)?.[1]);
   if (!id) return json({ error: "Not found" }, 404);
   if (request.method === "DELETE") {
-    await env.DB.prepare("DELETE FROM reviews WHERE id = ?").bind(id).run();
+    await db(env, `reviews?id=eq.${id}`, { method: "DELETE" });
     return json({ ok: true });
   }
   if (request.method === "PATCH") {
     const body = await request.json().catch(() => ({}));
+    const patch = {};
     if (body.status !== undefined) {
       if (!STATUSES.includes(body.status)) return json({ error: "Invalid status" }, 400);
-      await env.DB.prepare("UPDATE reviews SET status = ? WHERE id = ?").bind(body.status, id).run();
+      patch.status = body.status;
     }
-    if (body.reply !== undefined) {
-      await env.DB.prepare("UPDATE reviews SET reply = ? WHERE id = ?")
-        .bind(String(body.reply).trim().slice(0, 1500), id)
-        .run();
-    }
+    if (body.reply !== undefined) patch.reply = String(body.reply).trim().slice(0, 1500);
+    if (Object.keys(patch).length) await db(env, `reviews?id=eq.${id}`, { method: "PATCH", body: patch });
     return json({ ok: true });
   }
   return json({ error: "Method not allowed" }, 405);
