@@ -6,6 +6,7 @@ import Rewards from "@/pages/Rewards";
 import About from "@/pages/About";
 import Reviews from "@/pages/Reviews";
 import NotFound from "@/pages/NotFound";
+import Admin from "@/pages/Admin";
 
 export default function App() {
   return (
@@ -16,6 +17,7 @@ export default function App() {
         <Route path="rewards" element={<Rewards />} />
         <Route path="this-is-us" element={<About />} />
         <Route path="reviews" element={<Reviews />} />
+          <Route path="admin" element={<Admin />} />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
