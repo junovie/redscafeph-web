@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "dev:api": "wrangler dev --port 8787",
-    "deploy": "wrangler d1 migrations apply redscafeph-reviews --remote && wrangler deploy"
+    "deploy": "wrangler deploy"
   },
   "dependencies": {
     "lucide-react": "^0.460.0",
