@@ -20,7 +20,7 @@ export default function Layout() {
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-40 border-b border-white/10 bg-black/90 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-3">
-          <Logo className="scale-75 origin-left sm:scale-90" />
+          <Logo />
           <nav className="hidden items-center gap-10 md:flex">
             {NAV.map((n) => (
               <NavLink key={n.to} to={n.to} end className={navClass}>
