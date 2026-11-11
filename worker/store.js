@@ -105,6 +105,23 @@ async function mayaKeys(env, branchId) {
 }
 const basic = (key) => `Basic ${btoa(`${key}:`)}`;
 
+// A one-time QR Ph code for this order's exact total, shown on Maya's page; any bank or e-wallet can pay it.
+async function createMayaQr(keys, order, origin) {
+  const back = `${origin}/order/${order.status_token}`;
+  const res = await fetch(`${MAYA}/payments/v1/qr/payments`, {
+    method: "POST",
+    headers: { authorization: basic(keys.public_key), "content-type": "application/json" },
+    body: JSON.stringify({
+      totalAmount: { value: order.total, currency: "PHP" },
+      redirectUrl: { success: `${back}?paid=1`, failure: `${back}?paid=0`, cancel: `${back}?paid=0` },
+      requestReferenceNumber: order.id,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.redirectUrl) throw new Error(`Maya QR: ${res.status} ${data.message || data.error || ""}`);
+  return { checkoutId: data.paymentId, redirectUrl: data.redirectUrl };
+}
+
 async function createMayaCheckout(keys, order, origin) {
   const back = `${origin}/order/${order.status_token}`;
   const res = await fetch(`${MAYA}/checkout/v1/checkouts`, {
@@ -374,11 +391,11 @@ async function placeOrder(request, env) {
 
   const method = body.payment_method;
   if (method === "cod") {
-    if (total >= COD_LIMIT) return bad(`Cash on delivery is only for orders under ₱${COD_LIMIT.toLocaleString("en-PH")}. Please pay with QRPh.`);
+    if (total >= COD_LIMIT) return bad(`Cash on delivery is only for orders under ₱${COD_LIMIT.toLocaleString("en-PH")}. Please pay online or with QR.`);
   } else if (method === "qrph") {
-    if (!store.qrph_image_url) return bad(`${store.display_name} can't take QRPh yet. Please choose another payment.`);
-    if (!body.payment_proof) return bad("Please upload your QRPh payment screenshot.");
-  } else if (method === "maya") {
+    if (!store.qrph_image_url) return bad(`${store.display_name} can't take GCash QR yet. Please choose another payment.`);
+    if (!body.payment_proof) return bad("Please upload your GCash payment screenshot.");
+  } else if (method === "maya" || method === "maya_qr") {
     if (!store.online_pay) return bad(`${store.display_name} can't take online payments yet. Please choose another payment.`);
   } else {
     return bad("Please choose how you'll pay.");
@@ -402,13 +419,14 @@ async function placeOrder(request, env) {
     if (!proofUri) return bad("Please upload your payment screenshot as a photo (JPG or PNG).");
   }
 
+  const online = method === "maya" || method === "maya_qr";
   const order = {
     id,
     company_id: store.company_id,
     branch_id: store.branch_id,
     order_number: `W-${token.slice(0, 6).toUpperCase()}`,
     status_token: token,
-    status: method === "maya" ? "awaiting_payment" : "new",
+    status: online ? "awaiting_payment" : "new",
     fulfillment,
     customer_name: name,
     customer_phone: phone,
@@ -425,17 +443,18 @@ async function placeOrder(request, env) {
     delivery_fee: fee,
     total,
     payment_method: method,
-    payment_status: method === "qrph" ? "to_verify" : method === "maya" ? "pending" : "unpaid",
+    payment_status: method === "qrph" ? "to_verify" : online ? "pending" : "unpaid",
     payment_reference: clean(body.payment_reference, 40),
     payment_proof_uri: proofUri,
     ip_hash: ipHash,
   };
   await pos(env, "online_order", { method: "POST", body: order, headers: { prefer: "return=minimal" } });
-  if (method === "maya") {
+  if (online) {
     try {
       const keys = await mayaKeys(env, store.branch_id);
       if (!keys) throw new Error("Maya keys missing");
-      const checkout = await createMayaCheckout(keys, order, new URL(request.url).origin);
+      const create = method === "maya_qr" ? createMayaQr : createMayaCheckout;
+      const checkout = await create(keys, order, new URL(request.url).origin);
       await pos(env, `online_order?id=eq.${id}`, {
         method: "PATCH",
         body: { maya_checkout_id: checkout.checkoutId, maya_checkout_url: checkout.redirectUrl },
