@@ -46,7 +46,7 @@ export async function api(path, opts) {
 const fmtTime = (hhmm) => {
   const [h, m] = String(hhmm || "").split(":").map(Number);
   if (!Number.isFinite(h)) return "";
-  if (h === 24 || h === 0) return "midnight";
+  if (h === 24 || (h === 0 && !m)) return "midnight";
   return `${((h + 11) % 12) + 1}${m ? `:${String(m).padStart(2, "0")}` : ""}${h < 12 ? "AM" : "PM"}`;
 };
 export const hoursLabel = (s) =>
