@@ -53,24 +53,57 @@ const companyId = (env) => {
   return env.STORE_COMPANY_ID;
 };
 
-// Minutes since midnight in Manila.
-function manilaMinutes(date = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Manila", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(date);
-  const get = (t) => Number(parts.find((p) => p.type === t)?.value || 0);
-  return get("hour") * 60 + get("minute");
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+// Date, weekday (0 = Sunday) and minutes since midnight in Manila.
+function manilaParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(date);
+  const get = (t) => parts.find((p) => p.type === t)?.value || "";
+  return {
+    ymd: `${get("year")}-${get("month")}-${get("day")}`,
+    weekday: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(get("weekday")),
+    mins: Number(get("hour")) * 60 + Number(get("minute")),
+  };
 }
 const toMinutes = (hhmm, fallback) => {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ""));
   return m ? Number(m[1]) * 60 + Number(m[2]) : fallback;
 };
 
+// A closed date wins over the weekday's hours; stores without weekly hours use open_time/last_order_time every day.
+function hoursOn(s, ymd, weekday) {
+  const holiday = (Array.isArray(s.closed_dates) ? s.closed_dates : []).find((c) => c?.date === ymd);
+  if (holiday) return { closed: true, note: holiday.note || "" };
+  const day = Array.isArray(s.weekly_hours) && s.weekly_hours.length === 7 ? s.weekly_hours[weekday] : null;
+  if (day?.closed) return { closed: true, note: "" };
+  return { closed: false, open: day?.open || s.open_time || "07:00", last_order: day?.last_order || s.last_order_time || "24:00" };
+}
+
 function storeStatus(s, now = new Date()) {
   const paused = s.paused_until && new Date(s.paused_until) > now;
-  const opens = toMinutes(s.open_time, 7 * 60);
-  const lastOrder = toMinutes(s.last_order_time, 24 * 60);
-  const mins = manilaMinutes(now);
-  const open = opens <= lastOrder ? mins >= opens && mins < lastOrder : mins >= opens || mins < lastOrder;
-  return { open: open && !paused, paused: !!paused, paused_until: paused ? s.paused_until : null };
+  const { ymd, weekday, mins } = manilaParts(now);
+  const today = hoursOn(s, ymd, weekday);
+  const open = !today.closed && mins >= toMinutes(today.open, 7 * 60) && mins < toMinutes(today.last_order, 24 * 60);
+  let next_open = null;
+  for (let i = 0; !open && i < 15; i++) {
+    const p = i ? manilaParts(new Date(now.getTime() + i * 86400e3)) : { ymd, weekday };
+    const h = hoursOn(s, p.ymd, p.weekday);
+    if (h.closed || (i === 0 && mins >= toMinutes(h.last_order, 24 * 60))) continue;
+    next_open = { date: p.ymd, day: i === 0 ? "today" : i === 1 ? "tomorrow" : `on ${WEEKDAYS[p.weekday]}`, time: h.open };
+    break;
+  }
+  return {
+    open: open && !paused,
+    paused: !!paused,
+    paused_until: paused ? s.paused_until : null,
+    open_time: today.open || null,
+    last_order_time: today.last_order || null,
+    closed_today: today.closed,
+    closed_note: today.note || "",
+    next_open,
+  };
 }
 
 function distanceKm(aLat, aLng, bLat, bLng) {
@@ -187,8 +220,6 @@ function publicStore(s) {
     address: s.address,
     latitude: s.latitude,
     longitude: s.longitude,
-    open_time: s.open_time,
-    last_order_time: s.last_order_time,
     allow_delivery: s.allow_delivery !== false,
     delivery: {
       base_fee: s.delivery_base_fee,
