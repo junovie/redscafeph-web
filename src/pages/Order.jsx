@@ -15,6 +15,7 @@ export default function Order() {
   const [menu, setMenu] = useState(null);
   const [error, setError] = useState("");
   const [storeId, setStoreId] = useState(() => localStorage.getItem("rc-store") || "");
+  const [picked, setPicked] = useState(() => !!localStorage.getItem("rc-store"));
   const [location, setLocation] = useState(null);
   const [locating, setLocating] = useState(false);
   const [picker, setPicker] = useState(false);
@@ -57,13 +58,15 @@ export default function Order() {
 
   // Nearest open store, unless the customer picked one themselves.
   useEffect(() => {
-    if (!ranked.length || ranked.some((s) => s.id === storeId)) return;
-    setStoreId((ranked.find((s) => s.open) || ranked[0]).id);
-  }, [ranked, storeId]);
+    if (!ranked.length || (picked && ranked.some((s) => s.id === storeId))) return;
+    const best = (ranked.find((s) => s.open) || ranked[0]).id;
+    if (best !== storeId) setStoreId(best);
+  }, [ranked, storeId, picked]);
 
   const store = ranked.find((s) => s.id === storeId);
   const chooseStore = (id) => {
     localStorage.setItem("rc-store", id);
+    setPicked(true);
     setStoreId(id);
     setPicker(false);
   };
