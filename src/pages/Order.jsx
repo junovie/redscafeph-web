@@ -106,9 +106,9 @@ export default function Order() {
         locating={locating}
         requestLocation={requestLocation}
         onBack={() => setView("menu")}
-        onPlaced={(token) => {
+        onPlaced={(token, leaving) => {
           setCart([]);
-          navigate(`/order/${token}`);
+          if (!leaving) navigate(`/order/${token}`);
         }}
       />
     );

@@ -29,7 +29,7 @@ export default function OrderStatus() {
         .then((o) => !stop && (setOrder(o), setError("")))
         .catch((e) => !stop && setError(e.message));
     load();
-    const t = setInterval(load, 15000);
+    const t = setInterval(load, new URLSearchParams(window.location.search).get("paid") === "1" ? 5000 : 15000);
     return () => {
       stop = true;
       clearInterval(t);
@@ -41,6 +41,19 @@ export default function OrderStatus() {
 
   const steps = STEPS[order.fulfillment] || STEPS.pickup;
   const cancelled = ["rejected", "cancelled"].includes(order.status);
+  if (order.status === "awaiting_payment") {
+    return (
+      <Shell>
+        <p className="eyebrow">Order {order.order_number}</p>
+        <h1 className="section-title mt-2 text-4xl sm:text-5xl">Waiting for your payment</h1>
+        <p className="lead mt-3">
+          The store gets your order once you've paid {peso(order.total)}. If you just paid, this page updates in a few seconds.
+        </p>
+        {order.pay_url && <a href={order.pay_url} className="btn-solid mt-8">Pay now</a>}
+        <p className="mt-6 text-sm text-paper/50">Unpaid orders are cancelled after about an hour.</p>
+      </Shell>
+    );
+  }
   const at = steps.findIndex(([s]) => s === order.status);
 
   return (
@@ -85,7 +98,7 @@ export default function OrderStatus() {
           <Row label="Subtotal" value={peso(order.subtotal)} />
           {order.fulfillment === "delivery" && <Row label="Delivery fee" value={peso(order.delivery_fee)} />}
           <Row label="Total" value={peso(order.total)} strong />
-          <Row label="Payment" value={order.payment_method === "cod" ? "Cash on delivery / pickup" : order.payment_status === "paid" ? "QRPh, confirmed" : "QRPh, being checked"} />
+          <Row label="Payment" value={order.payment_method === "cod" ? "Cash on delivery / pickup" : order.payment_method === "maya" ? (order.payment_status === "paid" ? "Paid online" : "Online payment not completed") : order.payment_status === "paid" ? "QRPh, confirmed" : "QRPh, being checked"} />
         </dl>
       </div>
       <p className="mt-6 text-sm text-paper/50">This page updates by itself. Keep it open or bookmark it.</p>

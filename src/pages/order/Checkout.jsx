@@ -66,6 +66,11 @@ export default function Checkout({ store, lines, setQty, codLimit, roadFactor, l
           website: form.website,
         }),
       });
+      if (res.pay_url) {
+        onPlaced(res.token, true);
+        window.location.assign(res.pay_url);
+        return;
+      }
       onPlaced(res.token);
     } catch (err) {
       setError(err.message);
@@ -151,8 +156,7 @@ export default function Checkout({ store, lines, setQty, codLimit, roadFactor, l
         <div className="space-y-2">
           <PayOption id="cod" active={pay === "cod"} onClick={setPayment} disabled={!codOk} label={fulfillment === "delivery" ? "Cash on delivery" : "Cash on pickup"} hint={codOk ? "" : `Only for orders under ${peso(codLimit)}`} />
           <PayOption id="qrph" active={pay === "qrph"} onClick={setPayment} disabled={!store.qrph_image_url} label="QRPh (any bank or e-wallet)" hint={store.qrph_image_url ? "Scan our QR, then upload your receipt" : "Not available at this store yet"} />
-          <PayOption id="gcash" disabled label="GCash" hint="Coming soon" />
-          <PayOption id="card" disabled label="Credit / debit card" hint="Coming soon" />
+          <PayOption id="maya" active={pay === "maya"} onClick={setPayment} disabled={!store.online_pay} label="Pay online: card, Maya or e-wallet" hint={store.online_pay ? "On Maya's secure page" : "Not available at this store yet"} />
         </div>
         {pay === "qrph" && (
           <div className="mt-5 border border-white/10 p-4">

@@ -7,6 +7,8 @@ const ROAD_FACTOR = 1.25;
 const MAX_ORDERS_PER_HOUR = 5;
 const HIDDEN_CATEGORIES = /^(grab\b|employee only|misc charges)/i;
 const PRIVATE_BUCKET = "order-private-files";
+const MAYA = "https://pg.paymaya.com";
+const PAY_WINDOW_MS = 70 * 60_000;
 
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), {
@@ -87,7 +89,78 @@ export function deliveryFee(store, km) {
 }
 
 async function loadStores(env) {
-  return rows(env, `online_store?select=*&company_id=eq.${companyId(env)}&is_enabled=eq.true&order=display_name`);
+  const [stores, pays] = await Promise.all([
+    rows(env, `online_store?select=*&company_id=eq.${companyId(env)}&is_enabled=eq.true&order=display_name`),
+    rows(env, `online_store_payment?select=branch_id&company_id=eq.${companyId(env)}`),
+  ]);
+  const online = new Set(pays.map((p) => p.branch_id));
+  return stores.map((s) => ({ ...s, online_pay: online.has(s.branch_id) }));
+}
+
+// Each branch is paid into its own Maya account; the keys never leave the server.
+async function mayaKeys(env, branchId) {
+  const res = await pos(env, "rpc/online_store_maya_keys", { method: "POST", body: { p_branch: branchId } });
+  const [k] = await res.json();
+  return k?.public_key && k?.secret_key ? k : null;
+}
+const basic = (key) => `Basic ${btoa(`${key}:`)}`;
+
+async function createMayaCheckout(keys, order, origin) {
+  const back = `${origin}/order/${order.status_token}`;
+  const res = await fetch(`${MAYA}/checkout/v1/checkouts`, {
+    method: "POST",
+    headers: { authorization: basic(keys.public_key), "content-type": "application/json" },
+    body: JSON.stringify({
+      totalAmount: { value: order.total, currency: "PHP" },
+      buyer: { firstName: order.customer_name, contact: { phone: order.customer_phone, ...(order.customer_email ? { email: order.customer_email } : {}) } },
+      items: [
+        ...order.items.map((l) => ({ name: l.product_name.slice(0, 100), quantity: l.quantity, totalAmount: { value: l.line_total } })),
+        ...(order.delivery_fee ? [{ name: "Delivery fee", quantity: 1, totalAmount: { value: order.delivery_fee } }] : []),
+      ],
+      redirectUrl: { success: `${back}?paid=1`, failure: `${back}?paid=0`, cancel: `${back}?paid=0` },
+      requestReferenceNumber: order.id,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.redirectUrl) throw new Error(`Maya checkout: ${res.status} ${data.message || data.error || ""}`);
+  return data;
+}
+
+// Asks Maya (never the browser or the webhook body) whether an order awaiting payment was paid.
+async function confirmMayaPayment(env, order) {
+  if (order.status !== "awaiting_payment") return order;
+  const keys = await mayaKeys(env, order.branch_id);
+  let paid = null;
+  if (keys) {
+    const res = await fetch(`${MAYA}/payments/v1/payment-rrns/${order.id}`, { headers: { authorization: basic(keys.secret_key) } });
+    const list = res.ok ? await res.json().catch(() => []) : [];
+    paid = (Array.isArray(list) ? list : []).find((p) => p.isPaid && Number(p.amount) >= Number(order.total) - 0.01) || null;
+  }
+  let patch = null;
+  if (paid) {
+    patch = { status: "new", payment_status: "paid", paid_at: new Date().toISOString(), payment_reference: String(paid.id || "").slice(0, 40) };
+  } else if (Date.now() - new Date(order.created_date).getTime() > PAY_WINDOW_MS) {
+    patch = { status: "cancelled", cancelled_at: new Date().toISOString(), status_note: "The online payment wasn't completed, so this order was cancelled." };
+  }
+  if (!patch) return order;
+  // Only move it if it's still awaiting payment, so two checks at once can't both change it.
+  const res = await pos(env, `online_order?id=eq.${order.id}&status=eq.awaiting_payment`, {
+    method: "PATCH",
+    body: patch,
+    headers: { prefer: "return=representation" },
+  });
+  const [updated] = await res.json();
+  return updated ? { ...order, ...updated } : order;
+}
+
+async function mayaWebhook(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const id = String(body.requestReferenceNumber || "");
+  if (/^[a-f0-9]{32}$/.test(id)) {
+    const [o] = await rows(env, `online_order?select=id,branch_id,status,total,created_date&id=eq.${id}&limit=1`);
+    if (o) await confirmMayaPayment(env, o);
+  }
+  return json({ ok: true });
 }
 
 function publicStore(s) {
@@ -107,6 +180,7 @@ function publicStore(s) {
       max_km: s.delivery_max_km,
     },
     qrph_image_url: s.qrph_image_url || null,
+    online_pay: !!s.online_pay,
     ...storeStatus(s),
   };
 }
@@ -304,6 +378,8 @@ async function placeOrder(request, env) {
   } else if (method === "qrph") {
     if (!store.qrph_image_url) return bad(`${store.display_name} can't take QRPh yet. Please choose another payment.`);
     if (!body.payment_proof) return bad("Please upload your QRPh payment screenshot.");
+  } else if (method === "maya") {
+    if (!store.online_pay) return bad(`${store.display_name} can't take online payments yet. Please choose another payment.`);
   } else {
     return bad("Please choose how you'll pay.");
   }
@@ -332,7 +408,7 @@ async function placeOrder(request, env) {
     branch_id: store.branch_id,
     order_number: `W-${token.slice(0, 6).toUpperCase()}`,
     status_token: token,
-    status: "new",
+    status: method === "maya" ? "awaiting_payment" : "new",
     fulfillment,
     customer_name: name,
     customer_phone: phone,
@@ -349,12 +425,29 @@ async function placeOrder(request, env) {
     delivery_fee: fee,
     total,
     payment_method: method,
-    payment_status: method === "qrph" ? "to_verify" : "unpaid",
+    payment_status: method === "qrph" ? "to_verify" : method === "maya" ? "pending" : "unpaid",
     payment_reference: clean(body.payment_reference, 40),
     payment_proof_uri: proofUri,
     ip_hash: ipHash,
   };
   await pos(env, "online_order", { method: "POST", body: order, headers: { prefer: "return=minimal" } });
+  if (method === "maya") {
+    try {
+      const keys = await mayaKeys(env, store.branch_id);
+      if (!keys) throw new Error("Maya keys missing");
+      const checkout = await createMayaCheckout(keys, order, new URL(request.url).origin);
+      await pos(env, `online_order?id=eq.${id}`, {
+        method: "PATCH",
+        body: { maya_checkout_id: checkout.checkoutId, maya_checkout_url: checkout.redirectUrl },
+        headers: { prefer: "return=minimal" },
+      });
+      return json({ ok: true, token, order_number: order.order_number, pay_url: checkout.redirectUrl }, 201);
+    } catch (e) {
+      console.error(e);
+      await pos(env, `online_order?id=eq.${id}`, { method: "DELETE", headers: { prefer: "return=minimal" } });
+      return bad("We couldn't start the online payment. Please try again or choose another payment.", 502);
+    }
+  }
   return json({ ok: true, token, order_number: order.order_number }, 201);
 }
 
@@ -362,12 +455,15 @@ async function orderStatus(env, token) {
   if (!/^[a-f0-9]{64}$/.test(token)) return bad("Order not found", 404);
   const [o] = await rows(
     env,
-    `online_order?select=order_number,status,status_note,fulfillment,branch_id,customer_name,address,items,subtotal,delivery_fee,total,payment_method,payment_status,created_date,accepted_at,ready_at,completed_at,cancelled_at&status_token=eq.${token}&limit=1`,
+    `online_order?select=id,maya_checkout_url,order_number,status,status_note,fulfillment,branch_id,customer_name,address,items,subtotal,delivery_fee,total,payment_method,payment_status,created_date,accepted_at,ready_at,completed_at,cancelled_at&status_token=eq.${token}&limit=1`,
   );
   if (!o) return bad("Order not found", 404);
+  Object.assign(o, await confirmMayaPayment(env, o));
   const [s] = await rows(env, `online_store?select=display_name,address&branch_id=eq.${o.branch_id}&limit=1`);
-  const rest = { ...o };
+  const rest = { ...o, pay_url: o.status === "awaiting_payment" ? o.maya_checkout_url : null };
   delete rest.branch_id;
+  delete rest.id;
+  delete rest.maya_checkout_url;
   return json({
     ...rest,
     items: (o.items || []).map((l) => ({
@@ -386,6 +482,7 @@ export async function handleStore(request, env, pathname) {
   if (pathname === "/api/store/stores" && request.method === "GET") return listStores(env);
   if (pathname === "/api/store/menu" && request.method === "GET") return menu(env);
   if (pathname === "/api/store/orders" && request.method === "POST") return placeOrder(request, env);
+  if (pathname === "/api/store/maya-webhook" && request.method === "POST") return mayaWebhook(request, env);
   const m = /^\/api\/store\/orders\/([^/]+)$/.exec(pathname);
   if (m && request.method === "GET") return orderStatus(env, m[1]);
   return null;
