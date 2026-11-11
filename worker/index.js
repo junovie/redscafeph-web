@@ -82,7 +82,11 @@ async function submit(request, env) {
 
 export default {
   async fetch(request, env) {
-    const { pathname } = new URL(request.url);
+    const url = new URL(request.url);
+    const { pathname } = url;
+    if (/^(www\.)?redscafeph\.com$/.test(url.hostname) && (pathname === "/order" || pathname.startsWith("/order/"))) {
+      return Response.redirect(`https://store.redscafeph.com${pathname}${url.search}`, 302);
+    }
     try {
       if (pathname === "/api/reviews") {
         if (request.method === "GET") return await listPublic(env);

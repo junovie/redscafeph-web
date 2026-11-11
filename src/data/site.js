@@ -1,4 +1,8 @@
 export const PERKS_URL = "https://perks.redscafeph.com/";
+export const STORE_URL = "https://store.redscafeph.com";
+export const IS_STORE_HOST = typeof window !== "undefined" && window.location.hostname.startsWith("store.");
+// The online store runs on store.redscafeph.com; its nav sends the other pages back to www.
+const site = (path) => (IS_STORE_HOST ? `https://www.redscafeph.com${path}` : path);
 
 export const HOURS = "Everything's open from 7AM til 2AM daily.";
 
@@ -36,10 +40,10 @@ export const SOCIALS = [
 ];
 
 export const NAV = [
-  { to: "/", label: "Home" },
-  { to: "/menu", label: "Menu" },
-  { to: "/order", label: "Order online" },
-  { to: "/rewards", label: "Rewards" },
-  { to: "/this-is-us", label: "This is us" },
-  { to: "/reviews", label: "Reviews" },
+  { to: site("/"), label: "Home" },
+  { to: site("/menu"), label: "Menu" },
+  { to: IS_STORE_HOST ? "/" : STORE_URL, label: "Order online" },
+  { to: site("/rewards"), label: "Rewards" },
+  { to: site("/this-is-us"), label: "This is us" },
+  { to: site("/reviews"), label: "Reviews" },
 ];
