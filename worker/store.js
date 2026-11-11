@@ -203,8 +203,8 @@ function priceLines(items, catalog) {
       const valid = picked.filter((l) => (m.options || []).some((o) => o.label === l));
       if (valid.length !== picked.length) return { error: `${p.name}: an option is no longer available.` };
       const labels = m.allow_multiple ? [...new Set(valid)] : valid.slice(0, 1);
-      const fallback = (m.options || []).filter((o) => o.is_default).map((o) => o.label);
-      const final = labels.length ? labels : m.allow_multiple ? fallback : fallback.slice(0, 1);
+      // The item sheet starts from the defaults, so an absent choice means the customer unticked it.
+      const final = labels;
       if (m.is_required && !final.length) return { error: `Choose ${m.name} for ${p.name}.` };
       if (!final.length) continue;
       chosen[m.id] = m.allow_multiple ? final : final[0];
@@ -255,7 +255,12 @@ async function placeOrder(request, env) {
   const store = stores.find((s) => s.branch_id === body.store_id);
   if (!store) return bad("Please pick a store.");
   const st = storeStatus(store);
-  if (st.paused) return bad(`${store.display_name} is busy and isn't taking online orders right now. Please try again in a bit or pick another store.`, 409);
+  // A QRPh customer has already paid, so their order is always recorded; staff see why and can refund.
+  const paidQr = body.payment_method === "qrph" && !!body.payment_proof;
+  const issues = [];
+  if (st.paused && paidQr) issues.push("Paid by QRPh while online orders were paused");
+  else if (!st.open && paidQr) issues.push("Paid by QRPh while the store was closed for online orders");
+  else if (st.paused) return bad(`${store.display_name} is busy and isn't taking online orders right now. Please try again in a bit or pick another store.`, 409);
   if (!st.open) return bad(`${store.display_name} is closed for online orders right now.`, 409);
 
   const name = clean(body.name, 60);
@@ -289,7 +294,8 @@ async function placeOrder(request, env) {
   const subtotal = round2(priced.lines.reduce((s, l) => s + l.line_total, 0));
   const total = round2(subtotal + fee);
   if (body.expected_total != null && Math.abs(Number(body.expected_total) - total) > 0.01) {
-    return bad("Prices changed since you added these items. Please check your basket and order again.", 409);
+    if (paidQr) issues.push(`Customer saw ₱${Number(body.expected_total).toFixed(2)}, POS prices now give ₱${total.toFixed(2)}`);
+    else return bad("Prices changed since you added these items. Please check your basket and order again.", 409);
   }
 
   const method = body.payment_method;
@@ -324,7 +330,7 @@ async function placeOrder(request, env) {
     id,
     company_id: store.company_id,
     branch_id: store.branch_id,
-    order_number: `W-${String(Date.now()).slice(-6)}`,
+    order_number: `W-${token.slice(0, 6).toUpperCase()}`,
     status_token: token,
     status: "new",
     fulfillment,
@@ -338,6 +344,7 @@ async function placeOrder(request, env) {
     distance_km: distance,
     items: priced.lines,
     notes: clean(body.notes, 300),
+    status_note: issues.join(". "),
     subtotal,
     delivery_fee: fee,
     total,
