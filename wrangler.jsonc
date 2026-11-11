@@ -10,6 +10,7 @@
     "run_worker_first": ["/api/*"]
   },
   "vars": {
-    "SUPABASE_URL": "https://psrtuqwrmnfqszazhnjx.supabase.co"
+    "SUPABASE_URL": "https://psrtuqwrmnfqszazhnjx.supabase.co",
+    "STORE_COMPANY_ID": "69faea8bf10fb8435c8f186f"
   }
 }

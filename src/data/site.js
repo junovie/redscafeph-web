@@ -38,6 +38,7 @@ export const SOCIALS = [
 export const NAV = [
   { to: "/", label: "Home" },
   { to: "/menu", label: "Menu" },
+  { to: "/order", label: "Order online" },
   { to: "/rewards", label: "Rewards" },
   { to: "/this-is-us", label: "This is us" },
   { to: "/reviews", label: "Reviews" },
