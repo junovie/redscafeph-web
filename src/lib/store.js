@@ -52,6 +52,7 @@ const fmtTime = (hhmm) => {
 export const hoursLabel = (s) =>
   s.closed_today ? `Closed today${s.closed_note ? ` (${s.closed_note})` : ""}` : `Online orders today ${fmtTime(s.open_time)}–${fmtTime(s.last_order_time)}`;
 export function closedMessage(s) {
+  if (s.no_shift) return `${s.name} isn't taking online orders right now. Please try again in a bit.`;
   const why = s.closed_today
     ? `${s.name} is closed today${s.closed_note ? ` (${s.closed_note})` : ""}.`
     : `${s.name} is closed for online orders now. ${hoursLabel(s)}.`;

@@ -64,6 +64,8 @@ export default function Order() {
   }, [ranked, storeId, picked]);
 
   const store = ranked.find((s) => s.id === storeId);
+  const soldOutIds = new Set(store?.sold_out || []);
+  const blocked = cart.filter((l) => soldOutIds.has(l.product_id));
   const chooseStore = (id) => {
     localStorage.setItem("rc-store", id);
     setPicked(true);
@@ -94,7 +96,7 @@ export default function Order() {
   if (!stores || !menu) return <section className="container-page py-16 text-paper/60">Loading the menu…</section>;
   if (!stores.length) return <section className="container-page py-16 text-paper/70">Online ordering isn't open yet. Please check back soon.</section>;
 
-  if (view === "checkout" && store?.open && cart.length) {
+  if (view === "checkout" && store?.open && cart.length && !blocked.length) {
     return (
       <Checkout
         store={store}
@@ -157,7 +159,7 @@ export default function Order() {
             <ul className="grid gap-px bg-white/10 sm:grid-cols-2">
               {c.items.map((p) => (
                 <li key={p.id} className="bg-ink">
-                  <button className="flex w-full items-center gap-4 py-4 text-left sm:px-3" onClick={() => setItem(p)}>
+                  <button className="flex w-full items-center gap-4 py-4 text-left disabled:opacity-50 sm:px-3" disabled={soldOutIds.has(p.id)} onClick={() => setItem(p)}>
                     {p.image_url && <img src={p.image_url} alt="" className="h-16 w-16 shrink-0 object-cover" loading="lazy" />}
                     <span className="flex-1">
                       <span className="block font-medium">{p.name}</span>
@@ -166,7 +168,11 @@ export default function Order() {
                         {p.options.length ? `from ${peso(p.price + Math.min(...p.options.map((o) => o.price)))}` : peso(p.price + p.base_extra)}
                       </span>
                     </span>
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center bg-red-brand text-white"><Plus className="h-5 w-5" /></span>
+                    {soldOutIds.has(p.id) ? (
+                      <span className="shrink-0 text-xs uppercase tracking-wider text-paper/60">Sold out</span>
+                    ) : (
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center bg-red-brand text-white"><Plus className="h-5 w-5" /></span>
+                    )}
                   </button>
                 </li>
               ))}
@@ -177,7 +183,13 @@ export default function Order() {
 
       {count > 0 && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-ink/95 p-4 backdrop-blur">
-          <button className="btn-solid mx-auto flex w-full max-w-2xl justify-between gap-3 px-5" disabled={!store?.open} onClick={() => setView("checkout")}>
+          {blocked.length > 0 && (
+            <p className="mx-auto mb-3 flex max-w-2xl items-center justify-between gap-3 text-sm">
+              <span>{[...new Set(blocked.map((l) => l.product_name || l.name))].join(", ")} sold out at {store?.name}.</span>
+              <button className="shrink-0 underline" onClick={() => setCart((c) => c.filter((l) => !soldOutIds.has(l.product_id)))}>Remove</button>
+            </p>
+          )}
+          <button className="btn-solid mx-auto flex w-full max-w-2xl justify-between gap-3 px-5" disabled={!store?.open || blocked.length > 0} onClick={() => setView("checkout")}>
             <span className="inline-flex items-center gap-2"><ShoppingBag className="h-4 w-4" /> {count} item{count > 1 ? "s" : ""}</span>
             <span>{store?.open ? "View basket" : "Store closed"}</span>
             <span className="tabular-nums">{peso(subtotal)}</span>
