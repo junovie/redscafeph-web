@@ -81,6 +81,10 @@ function hoursOn(s, ymd, weekday) {
   return { closed: false, open: day?.open || s.open_time || "07:00", last_order: day?.last_order || s.last_order_time || "24:00" };
 }
 
+// Product ids the store has switched off online (Grab-style sold out); "until" null = until staff turn it back on.
+const soldOut = (s, now = new Date()) =>
+  (Array.isArray(s.unavailable_items) ? s.unavailable_items : []).filter((u) => u?.product_id && (!u.until || new Date(u.until) > now)).map((u) => u.product_id);
+
 function storeStatus(s, now = new Date()) {
   const paused = s.paused_until && new Date(s.paused_until) > now;
   const { ymd, weekday, mins } = manilaParts(now);
@@ -94,9 +98,12 @@ function storeStatus(s, now = new Date()) {
     next_open = { date: p.ymd, day: i === 0 ? "today" : i === 1 ? "tomorrow" : `on ${WEEKDAYS[p.weekday]}`, time: h.open };
     break;
   }
+  // Within hours but nobody has opened a shift at the POS: nobody would see the order.
+  const noShift = open && s.shift_open === false;
   return {
-    open: open && !paused,
+    open: open && !paused && !noShift,
     paused: !!paused,
+    no_shift: noShift && !paused,
     paused_until: paused ? s.paused_until : null,
     open_time: today.open || null,
     last_order_time: today.last_order || null,
@@ -122,12 +129,14 @@ export function deliveryFee(store, km) {
 }
 
 async function loadStores(env) {
-  const [stores, pays] = await Promise.all([
+  const [stores, pays, shifts] = await Promise.all([
     rows(env, `online_store?select=*&company_id=eq.${companyId(env)}&is_enabled=eq.true&order=display_name`),
     rows(env, `online_store_payment?select=branch_id&company_id=eq.${companyId(env)}`),
+    rows(env, `shift?select=branch_id&company_id=eq.${companyId(env)}&status=eq.open`),
   ]);
   const online = new Set(pays.map((p) => p.branch_id));
-  return stores.map((s) => ({ ...s, online_pay: online.has(s.branch_id) }));
+  const shiftOpen = new Set(shifts.map((x) => x.branch_id));
+  return stores.map((s) => ({ ...s, online_pay: online.has(s.branch_id), shift_open: shiftOpen.has(s.branch_id) }));
 }
 
 // Each branch is paid into its own Maya account; the keys never leave the server.
@@ -229,6 +238,7 @@ function publicStore(s) {
     },
     qrph_image_url: s.qrph_image_url || null,
     online_pay: !!s.online_pay,
+    sold_out: soldOut(s),
     ...storeStatus(s),
   };
 }
@@ -413,6 +423,10 @@ async function placeOrder(request, env) {
   const catalog = await loadCatalog(env);
   const priced = priceLines(body.items, catalog);
   if (priced.error) return bad(priced.error);
+  const gone = new Set(soldOut(store));
+  const out = priced.lines.find((l) => gone.has(l.product_id));
+  if (out && paidQr) issues.push(`${out.product_name} was sold out online`);
+  else if (out) return bad(`${out.product_name} is sold out at ${store.display_name}. Please remove it from your basket.`, 409);
   const subtotal = round2(priced.lines.reduce((s, l) => s + l.line_total, 0));
   const total = round2(subtotal + fee);
   if (body.expected_total != null && Math.abs(Number(body.expected_total) - total) > 0.01) {
