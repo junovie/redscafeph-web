@@ -46,10 +46,17 @@ export async function api(path, opts) {
 const fmtTime = (hhmm) => {
   const [h, m] = String(hhmm || "").split(":").map(Number);
   if (!Number.isFinite(h)) return "";
-  if (h === 24 || h === 0) return "midnight";
+  if (h === 24 || (h === 0 && !m)) return "midnight";
   return `${((h + 11) % 12) + 1}${m ? `:${String(m).padStart(2, "0")}` : ""}${h < 12 ? "AM" : "PM"}`;
 };
-export const hoursLabel = (s) => `Online orders ${fmtTime(s.open_time)}–${fmtTime(s.last_order_time)}`;
+export const hoursLabel = (s) =>
+  s.closed_today ? `Closed today${s.closed_note ? ` (${s.closed_note})` : ""}` : `Online orders today ${fmtTime(s.open_time)}–${fmtTime(s.last_order_time)}`;
+export function closedMessage(s) {
+  const why = s.closed_today
+    ? `${s.name} is closed today${s.closed_note ? ` (${s.closed_note})` : ""}.`
+    : `${s.name} is closed for online orders now. ${hoursLabel(s)}.`;
+  return s.next_open ? `${why} Opens ${s.next_open.day} at ${fmtTime(s.next_open.time)}.` : why;
+}
 
 // Shrinks a photo to a JPEG data URL so uploads stay small on mobile data.
 export function shrinkImage(file, max = 1400) {

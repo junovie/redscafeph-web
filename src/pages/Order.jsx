@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronDown, MapPin, Plus, ShoppingBag } from "lucide-react";
-import { api, distanceKm, hoursLabel, peso, roundKm } from "@/lib/store";
+import { api, closedMessage, distanceKm, hoursLabel, peso, roundKm } from "@/lib/store";
 import ItemSheet from "@/pages/order/ItemSheet";
 import Checkout from "@/pages/order/Checkout";
 
@@ -133,7 +133,7 @@ export default function Order() {
           </button>
           {store && !store.open && (
             <p className="mt-4 border border-red-brand/50 bg-red-brand/10 px-4 py-3 text-sm">
-              {store.paused ? `${store.name} is busy and paused online orders for a bit.` : `${store.name} is closed for online orders now. ${hoursLabel(store)}.`} You can still browse, or pick another store.
+              {store.paused ? `${store.name} is busy and paused online orders for a bit.` : closedMessage(store)} You can still browse, or pick another store.
             </p>
           )}
           {!location && !locating && <p className="mt-3 text-xs text-paper/50">Turn on location to find the nearest store, or pick one yourself.</p>}
