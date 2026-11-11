@@ -424,9 +424,9 @@ async function placeOrder(request, env) {
   const priced = priceLines(body.items, catalog);
   if (priced.error) return bad(priced.error);
   const gone = new Set(soldOut(store));
-  const out = priced.lines.find((l) => gone.has(l.product_id));
-  if (out && paidQr) issues.push(`${out.product_name} was sold out online`);
-  else if (out) return bad(`${out.product_name} is sold out at ${store.display_name}. Please remove it from your basket.`, 409);
+  const out = [...new Set(priced.lines.filter((l) => gone.has(l.product_id)).map((l) => l.product_name))].join(", ");
+  if (out && paidQr) issues.push(`Sold out online: ${out}`);
+  else if (out) return bad(`${out} ${out.includes(", ") ? "are" : "is"} sold out at ${store.display_name}. Please remove ${out.includes(", ") ? "them" : "it"} from your basket.`, 409);
   const subtotal = round2(priced.lines.reduce((s, l) => s + l.line_total, 0));
   const total = round2(subtotal + fee);
   if (body.expected_total != null && Math.abs(Number(body.expected_total) - total) > 0.01) {
