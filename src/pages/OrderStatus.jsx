@@ -98,7 +98,7 @@ export default function OrderStatus() {
           <Row label="Subtotal" value={peso(order.subtotal)} />
           {order.fulfillment === "delivery" && <Row label="Delivery fee" value={peso(order.delivery_fee)} />}
           <Row label="Total" value={peso(order.total)} strong />
-          <Row label="Payment" value={order.payment_method === "cod" ? "Cash on delivery / pickup" : order.payment_method === "maya" ? (order.payment_status === "paid" ? "Paid online" : "Online payment not completed") : order.payment_status === "paid" ? "QRPh, confirmed" : "QRPh, being checked"} />
+          <Row label="Payment" value={order.payment_method === "cod" ? "Cash on delivery / pickup" : order.payment_method === "maya" || order.payment_method === "maya_qr" ? (order.payment_status === "paid" ? (order.payment_method === "maya_qr" ? "Paid by QR Ph" : "Paid online") : "Online payment not completed") : order.payment_status === "paid" ? "GCash, confirmed" : "GCash, being checked"} />
         </dl>
       </div>
       <p className="mt-6 text-sm text-paper/50">This page updates by itself. Keep it open or bookmark it.</p>

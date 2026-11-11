@@ -38,7 +38,7 @@ export default function Checkout({ store, lines, setQty, codLimit, roadFactor, l
     setError("");
     if (fulfillment === "delivery" && !location) return setError("Please share your location so we know where to deliver.");
     if (!pay) return setError("Please choose how you'll pay.");
-    if (pay === "qrph" && !proof) return setError("Please upload your QRPh payment screenshot.");
+    if (pay === "qrph" && !proof) return setError("Please upload your GCash payment screenshot.");
     if (pay === "qrph" && proofTotal !== total) return setError(`Your total changed to ${peso(total)} after you uploaded a receipt for ${peso(proofTotal)}. Upload a receipt for ${peso(total)}, or change your order back.`);
     setBusy(true);
     try {
@@ -155,13 +155,14 @@ export default function Checkout({ store, lines, setQty, codLimit, roadFactor, l
       <Block title="Payment">
         <div className="space-y-2">
           <PayOption id="cod" active={pay === "cod"} onClick={setPayment} disabled={!codOk} label={fulfillment === "delivery" ? "Cash on delivery" : "Cash on pickup"} hint={codOk ? "" : `Only for orders under ${peso(codLimit)}`} />
-          <PayOption id="qrph" active={pay === "qrph"} onClick={setPayment} disabled={!store.qrph_image_url} label="QRPh (any bank or e-wallet)" hint={store.qrph_image_url ? "Scan our QR, then upload your receipt" : "Not available at this store yet"} />
+          <PayOption id="maya_qr" active={pay === "maya_qr"} onClick={setPayment} disabled={!store.online_pay} label="QR Ph (any bank or e-wallet)" hint={store.online_pay ? "Scan a QR made for your exact total. Confirmed right away" : "Not available at this store yet"} />
+          <PayOption id="qrph" active={pay === "qrph"} onClick={setPayment} disabled={!store.qrph_image_url} label="GCash QR" hint={store.qrph_image_url ? "Scan our GCash QR, then upload your receipt" : "Not available at this store yet"} />
           <PayOption id="maya" active={pay === "maya"} onClick={setPayment} disabled={!store.online_pay} label="Pay online: card, Maya or e-wallet" hint={store.online_pay ? "On Maya's secure page" : "Not available at this store yet"} />
         </div>
         {pay === "qrph" && (
           <div className="mt-5 border border-white/10 p-4">
             <p className="text-sm text-paper/70">Pay exactly <span className="font-display text-cream">{peso(total)}</span> to this QR code, then upload a screenshot of the receipt.</p>
-            <img src={store.qrph_image_url} alt={`${store.name} QRPh code`} className="mx-auto mt-4 w-full max-w-xs bg-white p-2" />
+            <img src={store.qrph_image_url} alt={`${store.name} GCash QR code`} className="mx-auto mt-4 w-full max-w-xs bg-white p-2" />
             <a href={store.qrph_image_url} download className="mt-2 block text-center text-xs text-paper/60 underline">Save QR image</a>
             <label className="btn-outline mt-4 w-full cursor-pointer px-4">
               {proof ? "Change screenshot" : "Upload payment screenshot"}
