@@ -393,7 +393,7 @@ async function placeOrder(request, env) {
   if (st.paused && paidQr) issues.push("Paid by QRPh while online orders were paused");
   else if (!st.open && paidQr) issues.push("Paid by QRPh while the store was closed for online orders");
   else if (st.paused) return bad(`${store.display_name} is busy and isn't taking online orders right now. Please try again in a bit or pick another store.`, 409);
-  if (!st.open) return bad(`${store.display_name} is closed for online orders right now.`, 409);
+  if (!st.open && !paidQr) return bad(`${store.display_name} is closed for online orders right now.`, 409);
 
   const name = clean(body.name, 60);
   const phone = String(body.phone ?? "").replace(/[\s()-]/g, "");
