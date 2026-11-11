@@ -7,6 +7,7 @@ export default function Checkout({ store, lines, setQty, codLimit, roadFactor, l
   const [form, setForm] = useState(() => JSON.parse(localStorage.getItem("rc-customer") || "{}"));
   const [payment, setPayment] = useState("");
   const [proof, setProof] = useState(null);
+  const [proofTotal, setProofTotal] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -26,6 +27,7 @@ export default function Checkout({ store, lines, setQty, codLimit, roadFactor, l
     if (!file) return;
     try {
       setProof(await shrinkImage(file));
+      setProofTotal(total);
       setError("");
     } catch (err) {
       setError(err.message);
@@ -37,6 +39,7 @@ export default function Checkout({ store, lines, setQty, codLimit, roadFactor, l
     if (fulfillment === "delivery" && !location) return setError("Please share your location so we know where to deliver.");
     if (!pay) return setError("Please choose how you'll pay.");
     if (pay === "qrph" && !proof) return setError("Please upload your QRPh payment screenshot.");
+    if (pay === "qrph" && proofTotal !== total) return setError(`Your total changed to ${peso(total)} after you uploaded a receipt for ${peso(proofTotal)}. Upload a receipt for ${peso(total)}, or change your order back.`);
     setBusy(true);
     try {
       const { name, phone, email, address, address_notes } = form;
@@ -161,6 +164,7 @@ export default function Checkout({ store, lines, setQty, codLimit, roadFactor, l
               <input type="file" accept="image/*" className="hidden" onChange={pickProof} />
             </label>
             {proof && <img src={proof} alt="Your payment screenshot" className="mx-auto mt-3 max-h-60" />}
+            {proof && proofTotal !== total && <p className="mt-2 text-sm text-red-300">This receipt was for {peso(proofTotal)}, but your total is now {peso(total)}.</p>}
             <div className="mt-4">
               <Field label="Reference no." value={form.payment_reference} onChange={set("payment_reference")} placeholder="Optional" max={40} />
             </div>
