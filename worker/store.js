@@ -525,7 +525,7 @@ async function resolveMapLink(url) {
       return bad("That doesn't look like a Google Maps link.");
     }
     if (u.protocol !== "https:" || !MAP_HOSTS.test(u.hostname)) return bad("Please paste a Google Maps link.");
-    const text = decodeURIComponent(u.href);
+    const text = decodeURIComponent(u.href.replace(/\+/g, " "));
     const m = /!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/.exec(text) || /[?&](?:q|query|ll|destination)=(-?\d+\.\d+),\s*(-?\d+\.\d+)/.exec(text) || /@(-?\d+\.\d+),(-?\d+\.\d+)/.exec(text);
     if (m) return json({ lat: Number(m[1]), lng: Number(m[2]) });
     if (!/goo\.gl$/.test(u.hostname)) break;
