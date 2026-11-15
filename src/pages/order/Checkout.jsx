@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, LocateFixed, Minus, Plus } from "lucide-react";
-import { api, deliveryFee, distanceKm, peso, roundKm, shrinkImage } from "@/lib/store";
+import { api, peso, shrinkImage } from "@/lib/store";
+import { AREA_LABEL, COD_MAX, codAllowed, deliveryQuote } from "@/lib/delivery";
+import MapPin from "@/pages/order/MapPin";
 
-export default function Checkout({ store, lines, setQty, codLimit, roadFactor, location, locating, requestLocation, onBack, onPlaced }) {
+export default function Checkout({ store, lines, setQty, mapsKey, location, locating, requestLocation, onBack, onPlaced }) {
   const [fulfillment, setFulfillment] = useState(store.allow_delivery ? "delivery" : "pickup");
   const [form, setForm] = useState(() => JSON.parse(localStorage.getItem("rc-customer") || "{}"));
   const [payment, setPayment] = useState("");
@@ -10,15 +12,19 @@ export default function Checkout({ store, lines, setQty, codLimit, roadFactor, l
   const [proofTotal, setProofTotal] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [pin, setPin] = useState(location);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  useEffect(() => {
+    if (location) setPin(location);
+  }, [location]);
 
   const subtotal = lines.reduce((s, l) => s + l.unit_price * l.quantity, 0);
-  const km = location ? roundKm(distanceKm(store.latitude, store.longitude, location.lat, location.lng, roadFactor)) : null;
-  const maxKm = Number(store.delivery?.max_km ?? 10);
-  const tooFar = fulfillment === "delivery" && km != null && km > maxKm;
-  const fee = fulfillment === "delivery" && km != null && !tooFar ? deliveryFee(store, km) : 0;
+  const quote = fulfillment === "delivery" && pin ? deliveryQuote(store, pin.lat, pin.lng) : null;
+  const tooFar = !!quote?.tooFar;
+  const intercity = !!quote?.intercity;
+  const fee = quote && !tooFar ? quote.fee : 0;
   const total = Math.round((subtotal + fee) * 100) / 100;
-  const codOk = total < codLimit;
+  const codOk = codAllowed(total) && !intercity;
   const pay = payment === "cod" && !codOk ? "" : payment;
 
   const pickProof = async (e) => {
@@ -36,7 +42,7 @@ export default function Checkout({ store, lines, setQty, codLimit, roadFactor, l
 
   const place = async () => {
     setError("");
-    if (fulfillment === "delivery" && !location) return setError("Please share your location so we know where to deliver.");
+    if (fulfillment === "delivery" && !pin) return setError("Turn on your location and set your pin so we know where to deliver.");
     if (!pay) return setError("Please choose how you'll pay.");
     if (pay === "qrph" && !proof) return setError("Please upload your GCash payment screenshot.");
     if (pay === "qrph" && proofTotal !== total) return setError(`Your total changed to ${peso(total)} after you uploaded a receipt for ${peso(proofTotal)}. Upload a receipt for ${peso(total)}, or change your order back.`);
@@ -55,8 +61,8 @@ export default function Checkout({ store, lines, setQty, codLimit, roadFactor, l
           email,
           address,
           address_notes,
-          latitude: fulfillment === "delivery" ? location?.lat : null,
-          longitude: fulfillment === "delivery" ? location?.lng : null,
+          latitude: fulfillment === "delivery" ? pin?.lat : null,
+          longitude: fulfillment === "delivery" ? pin?.lng : null,
           notes: form.notes,
           payment_method: pay,
           payment_reference: form.payment_reference,
@@ -124,12 +130,20 @@ export default function Checkout({ store, lines, setQty, codLimit, roadFactor, l
           <button onClick={requestLocation} className="btn-outline w-full gap-2 px-4" disabled={locating}>
             <LocateFixed className="h-4 w-4" /> {locating ? "Finding you…" : location ? "Update my location" : "Use my current location"}
           </button>
-          {km != null && (
+          {!location && !locating && (
+            <p className="mt-3 text-sm text-paper/70">For delivery, turn on location services for this site, then tap the button above. Without it you can still choose pickup.</p>
+          )}
+          {location && <MapPin mapsKey={mapsKey} pin={pin} onPin={setPin} />}
+          {quote && (
             <p className={`mt-3 text-sm ${tooFar ? "text-red-brand" : "text-paper/70"}`}>
-              {tooFar ? `You're about ${km} km away. ${store.name} delivers up to ${maxKm} km. Try another store or pickup.` : `About ${km} km from ${store.name}. Delivery fee ${peso(fee)}.`}
+              {tooFar
+                ? `Your pin is about ${quote.km} km away, too far for ${store.name}. Try another store or pickup.`
+                : intercity
+                  ? `Your pin is outside ${AREA_LABEL.cebu_city} and ${AREA_LABEL.mandaue}, about ${quote.km} km from ${store.name}. Out-of-city delivery is ${peso(fee)} and must be paid online or by QR.`
+                  : `About ${quote.km} km from ${store.name}. Delivery fee ${peso(fee)}.`}
             </p>
           )}
-          <p className="mt-2 text-xs text-paper/50">We book a Lalamove or Grab Express rider for you. Stay at the location you shared.</p>
+          <p className="mt-2 text-xs text-paper/50">Our own rider brings your order. The whole delivery fee goes to the rider.</p>
           <div className="mt-4 space-y-4">
             <Field label="Address" value={form.address} onChange={set("address")} placeholder="House/unit no., street, barangay" max={300} />
             <Field label="Landmark or notes for the rider" value={form.address_notes} onChange={set("address_notes")} placeholder="Optional" max={200} />
@@ -154,7 +168,7 @@ export default function Checkout({ store, lines, setQty, codLimit, roadFactor, l
 
       <Block title="Payment">
         <div className="space-y-2">
-          <PayOption id="cod" active={pay === "cod"} onClick={setPayment} disabled={!codOk} label={fulfillment === "delivery" ? "Cash on delivery" : "Cash on pickup"} hint={codOk ? "" : `Only for orders under ${peso(codLimit)}`} />
+          <PayOption id="cod" active={pay === "cod"} onClick={setPayment} disabled={!codOk} label={fulfillment === "delivery" ? "Cash on delivery" : "Cash on pickup"} hint={codOk ? "" : intercity ? `Only inside ${AREA_LABEL.cebu_city} and ${AREA_LABEL.mandaue}` : `Only for orders of ${peso(COD_MAX)} or less`} />
           <PayOption id="maya_qr" active={pay === "maya_qr"} onClick={setPayment} disabled={!store.online_pay} label="QR Ph (any bank or e-wallet)" hint={store.online_pay ? "Scan a QR made for your exact total. Confirmed right away" : "Not available at this store yet"} />
           <PayOption id="qrph" active={pay === "qrph"} onClick={setPayment} disabled={!store.qrph_image_url} label="GCash QR" hint={store.qrph_image_url ? "Scan our GCash QR, then upload your receipt" : "Not available at this store yet"} />
           <PayOption id="maya" active={pay === "maya"} onClick={setPayment} disabled={!store.online_pay} label="Pay online: card, Maya or e-wallet" hint={store.online_pay ? "On Maya's secure page" : "Not available at this store yet"} />
@@ -179,11 +193,11 @@ export default function Checkout({ store, lines, setQty, codLimit, roadFactor, l
 
       <div className="mt-8 space-y-1 border-t border-white/10 pt-5 text-sm">
         <Row label="Subtotal" value={peso(subtotal)} />
-        {fulfillment === "delivery" && <Row label="Delivery fee" value={location ? peso(fee) : "Share your location"} />}
+        {fulfillment === "delivery" && <Row label="Delivery fee" value={pin ? peso(fee) : "Set your pin"} />}
         <Row label="Total" value={peso(total)} strong />
       </div>
       {error && <p className="mt-4 text-sm text-red-brand">{error}</p>}
-      <button className="btn-solid mt-6 w-full" onClick={place} disabled={busy || tooFar || !lines.length}>
+      <button className="btn-solid mt-6 w-full" onClick={place} disabled={busy || tooFar || !lines.length || (fulfillment === "delivery" && !pin)}>
         {busy ? "Placing order…" : `Place order · ${peso(total)}`}
       </button>
     </section>

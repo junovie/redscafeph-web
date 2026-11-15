@@ -11,7 +11,7 @@ const sameLine = (a, b) =>
 export default function Order() {
   const navigate = useNavigate();
   const [stores, setStores] = useState(null);
-  const [config, setConfig] = useState({ cod_limit: 1000, road_factor: 1.25 });
+  const [config, setConfig] = useState({ road_factor: 1.25, maps_key: null });
   const [menu, setMenu] = useState(null);
   const [error, setError] = useState("");
   const [storeId, setStoreId] = useState(() => localStorage.getItem("rc-store") || "");
@@ -27,7 +27,7 @@ export default function Order() {
     Promise.all([api("/api/store/stores"), api("/api/store/menu")])
       .then(([s, m]) => {
         setStores(s.stores);
-        setConfig({ cod_limit: s.cod_limit, road_factor: s.road_factor });
+        setConfig({ road_factor: s.road_factor, maps_key: s.maps_key });
         setMenu(m);
       })
       .catch((e) => setError(e.message));
@@ -100,8 +100,7 @@ export default function Order() {
         store={store}
         lines={cart}
         setQty={setQty}
-        codLimit={config.cod_limit}
-        roadFactor={config.road_factor}
+        mapsKey={config.maps_key}
         location={location}
         locating={locating}
         requestLocation={requestLocation}
