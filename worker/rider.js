@@ -54,8 +54,9 @@ async function setStatus(request, env, rider) {
   const { status } = await request.json().catch(() => ({}));
   if (!["available", "offline"].includes(status)) return bad("Choose Available or Offline.");
   if (rider.status === "on_delivery") return bad("Finish your delivery first.", 409);
-  if (rider.status !== status) await patch(env, `rider?id=eq.${rider.id}`, { status });
-  return riderView(env, { ...rider, status });
+  if (rider.status !== status) await patch(env, `rider?id=eq.${rider.id}&status=neq.on_delivery`, { status });
+  const [fresh] = await rows(env, `rider?select=id,company_id,branch_id,name,status,is_active&id=eq.${rider.id}&limit=1`);
+  return riderView(env, fresh);
 }
 
 async function uploadPhoto(env, path, dataUrl) {
