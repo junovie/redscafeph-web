@@ -80,13 +80,13 @@ async function orderStep(request, env, rider, orderId, step) {
   const now = new Date().toISOString();
   if (step === "pickup") {
     if (o.status !== "accepted") return bad("This order was already picked up.", 409);
-    await patch(env, `online_order?id=eq.${o.id}&status=eq.accepted`, { status: "ready", ready_at: now, picked_up_at: now });
+    await patch(env, `online_order?id=eq.${o.id}&rider_id=eq.${rider.id}&status=eq.accepted`, { status: "ready", ready_at: now, picked_up_at: now });
   } else {
     if (o.status !== "ready") return bad("Tap Picked up first.", 409);
     const { photo } = await request.json().catch(() => ({}));
     const proof = await uploadPhoto(env, `delivery-proofs/${o.id}`, photo);
     if (!proof) return bad("Take a photo of the order at the customer's door (JPG or PNG, under 4 MB).");
-    await patch(env, `online_order?id=eq.${o.id}&status=eq.ready`, { status: "completed", completed_at: now, delivered_at: now, delivery_proof_uri: proof });
+    await patch(env, `online_order?id=eq.${o.id}&rider_id=eq.${rider.id}&status=eq.ready`, { status: "completed", completed_at: now, delivered_at: now, delivery_proof_uri: proof });
   }
   const [fresh] = await rows(env, `rider?select=id,company_id,branch_id,name,status,is_active&id=eq.${rider.id}&limit=1`);
   return riderView(env, fresh);
