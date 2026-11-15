@@ -2,36 +2,36 @@
 // Everything runs with the service role key, so every input is validated and every price
 // is recomputed here from the POS data, never trusted from the browser.
 
-export const COD_LIMIT = 1000;
-const ROAD_FACTOR = 1.25;
+import { AREA_LABEL, COD_MAX, INTERCITY_MAX_KM, PAID_METHODS, ROAD_FACTOR, codAllowed, deliveryQuote } from "../src/lib/delivery.js";
+
 const MAX_ORDERS_PER_HOUR = 5;
 const HIDDEN_CATEGORIES = /^(grab\b|employee only|misc charges)/i;
-const PRIVATE_BUCKET = "order-private-files";
+export const PRIVATE_BUCKET = "order-private-files";
 const MAYA = "https://pg.paymaya.com";
 const PAY_WINDOW_MS = 70 * 60_000;
 
-const json = (data, status = 200, headers = {}) =>
+export const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), {
     status,
     headers: { "content-type": "application/json", "cache-control": "no-store", ...headers },
   });
 
-const bad = (error, status = 400) => json({ error }, status);
-const clean = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+export const bad = (error, status = 400) => json({ error }, status);
+export const clean = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 const round2 = (n) => Math.round(n * 100) / 100;
 
-async function sha256(text) {
+export async function sha256(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function keyHeaders(env) {
+export function keyHeaders(env) {
   const key = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!env.SUPABASE_URL || !key) throw new Error("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set");
   return { apikey: key, ...(key.startsWith("eyJ") ? { authorization: `Bearer ${key}` } : {}) };
 }
 
-async function pos(env, path, { method = "GET", body, headers = {} } = {}) {
+export async function pos(env, path, { method = "GET", body, headers = {} } = {}) {
   const res = await fetch(`${env.SUPABASE_URL.replace(/\/$/, "")}/rest/v1/${path}`, {
     method,
     headers: {
@@ -46,7 +46,7 @@ async function pos(env, path, { method = "GET", body, headers = {} } = {}) {
   if (!res.ok) throw new Error(`Supabase ${method} ${path.split("?")[0]}: ${res.status} ${await res.text()}`);
   return res;
 }
-const rows = async (env, path) => (await pos(env, path)).json();
+export const rows = async (env, path) => (await pos(env, path)).json();
 
 const companyId = (env) => {
   if (!env.STORE_COMPANY_ID) throw new Error("STORE_COMPANY_ID not set");
@@ -104,21 +104,6 @@ function storeStatus(s, now = new Date()) {
     closed_note: today.note || "",
     next_open,
   };
-}
-
-function distanceKm(aLat, aLng, bLat, bLng) {
-  const rad = (d) => (d * Math.PI) / 180;
-  const dLat = rad(bLat - aLat);
-  const dLng = rad(bLng - aLng);
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(aLat)) * Math.cos(rad(bLat)) * Math.sin(dLng / 2) ** 2;
-  return 2 * 6371 * Math.asin(Math.sqrt(h)) * ROAD_FACTOR;
-}
-
-export function deliveryFee(store, km) {
-  const base = Number(store.delivery_base_fee ?? 49);
-  const baseKm = Number(store.delivery_base_km ?? 2);
-  const perKm = Number(store.delivery_per_km ?? 10);
-  return round2(base + Math.max(0, Math.ceil(km - baseKm)) * perKm);
 }
 
 async function loadStores(env) {
@@ -221,12 +206,6 @@ function publicStore(s) {
     latitude: s.latitude,
     longitude: s.longitude,
     allow_delivery: s.allow_delivery !== false,
-    delivery: {
-      base_fee: s.delivery_base_fee,
-      base_km: s.delivery_base_km,
-      per_km: s.delivery_per_km,
-      max_km: s.delivery_max_km,
-    },
     qrph_image_url: s.qrph_image_url || null,
     online_pay: !!s.online_pay,
     ...storeStatus(s),
@@ -235,7 +214,7 @@ function publicStore(s) {
 
 async function listStores(env) {
   const stores = await loadStores(env);
-  return json({ stores: stores.map(publicStore), cod_limit: COD_LIMIT, road_factor: ROAD_FACTOR });
+  return json({ stores: stores.map(publicStore), cod_limit: COD_MAX, road_factor: ROAD_FACTOR, maps_key: env.GOOGLE_MAPS_KEY || null });
 }
 
 // Same rule the POS uses to decide which modifiers apply to a product.
@@ -391,6 +370,7 @@ async function placeOrder(request, env) {
   if (!/^(09|\+639)\d{9}$/.test(phone)) return bad("Please enter a valid mobile number, like 0917 123 4567.");
   const fulfillment = body.fulfillment === "delivery" ? "delivery" : "pickup";
 
+  const method = body.payment_method;
   let distance = null;
   let fee = 0;
   let lat = null;
@@ -404,10 +384,15 @@ async function placeOrder(request, env) {
       return bad("Please share your location so we know where to deliver.");
     }
     if (!address) return bad("Please enter your delivery address.");
-    distance = Math.round(distanceKm(store.latitude, store.longitude, lat, lng) * 10) / 10;
-    const max = Number(store.delivery_max_km ?? 10);
-    if (distance > max) return bad(`You're about ${distance} km from ${store.display_name}. We only deliver up to ${max} km. Try a nearer store or pickup.`);
-    fee = deliveryFee(store, distance);
+    // Anywhere in Cebu City or Mandaue City is delivered at the city rate. Outside them, the
+    // intercity rate applies and the order must be paid online first.
+    const quote = deliveryQuote(store, lat, lng);
+    distance = quote.km;
+    if (quote.tooFar) return bad(`You're about ${distance} km from ${store.display_name}. Outside ${AREA_LABEL.cebu_city} and ${AREA_LABEL.mandaue} we deliver up to ${INTERCITY_MAX_KM} km. Try a nearer store or pickup.`);
+    if (quote.intercity && !PAID_METHODS.includes(method)) {
+      return bad(`Your pin is outside ${AREA_LABEL.cebu_city} and ${AREA_LABEL.mandaue}, so please pay online or with QR. Cash on delivery is only inside the two cities.`);
+    }
+    fee = quote.fee;
   }
 
   const catalog = await loadCatalog(env);
@@ -420,9 +405,8 @@ async function placeOrder(request, env) {
     else return bad("Prices changed since you added these items. Please check your basket and order again.", 409);
   }
 
-  const method = body.payment_method;
   if (method === "cod") {
-    if (total >= COD_LIMIT) return bad(`Cash on delivery is only for orders under ₱${COD_LIMIT.toLocaleString("en-PH")}. Please pay online or with QR.`);
+    if (!codAllowed(total)) return bad(`Cash is only for orders of ₱${COD_MAX} or less. Please pay online or with QR.`);
   } else if (method === "qrph") {
     if (!store.qrph_image_url) return bad(`${store.display_name} can't take GCash QR yet. Please choose another payment.`);
     if (!body.payment_proof) return bad("Please upload your GCash payment screenshot.");
@@ -505,12 +489,12 @@ async function orderStatus(env, token) {
   if (!/^[a-f0-9]{64}$/.test(token)) return bad("Order not found", 404);
   const [o] = await rows(
     env,
-    `online_order?select=id,maya_checkout_url,order_number,status,status_note,fulfillment,branch_id,customer_name,address,items,subtotal,delivery_fee,total,payment_method,payment_status,created_date,accepted_at,ready_at,completed_at,cancelled_at&status_token=eq.${token}&limit=1`,
+    `online_order?select=id,maya_checkout_url,order_number,status,status_note,fulfillment,branch_id,customer_name,address,items,subtotal,delivery_fee,total,payment_method,payment_status,created_date,accepted_at,ready_at,completed_at,cancelled_at,rider_name,rider_assigned_at,picked_up_at,delivered_at&status_token=eq.${token}&limit=1`,
   );
   if (!o) return bad("Order not found", 404);
   Object.assign(o, await confirmMayaPayment(env, o));
   const [s] = await rows(env, `online_store?select=display_name,address&branch_id=eq.${o.branch_id}&limit=1`);
-  const rest = { ...o, pay_url: o.status === "awaiting_payment" ? o.maya_checkout_url : null };
+  const rest = { ...o, rider_name: (o.rider_name || "").split(" ")[0] || null, pay_url: o.status === "awaiting_payment" ? o.maya_checkout_url : null };
   delete rest.branch_id;
   delete rest.id;
   delete rest.maya_checkout_url;
@@ -528,7 +512,33 @@ async function orderStatus(env, token) {
   });
 }
 
+const MAP_HOSTS = /^(maps\.app\.goo\.gl|goo\.gl|(www\.|maps\.)?google\.com(\.ph)?)$/;
+
+// Finds the coordinates in a Google Maps link. Short links are followed (Google hosts only).
+async function resolveMapLink(url) {
+  let link = String(url || "").trim();
+  for (let hop = 0; hop < 5; hop++) {
+    let u;
+    try {
+      u = new URL(link);
+    } catch {
+      return bad("That doesn't look like a Google Maps link.");
+    }
+    if (u.protocol !== "https:" || !MAP_HOSTS.test(u.hostname)) return bad("Please paste a Google Maps link.");
+    const text = decodeURIComponent(u.href);
+    const m = /!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/.exec(text) || /[?&](?:q|query|ll|destination)=(-?\d+\.\d+),\s*(-?\d+\.\d+)/.exec(text) || /@(-?\d+\.\d+),(-?\d+\.\d+)/.exec(text);
+    if (m) return json({ lat: Number(m[1]), lng: Number(m[2]) });
+    if (!/goo\.gl$/.test(u.hostname)) break;
+    const res = await fetch(u.href, { redirect: "manual" });
+    const next = res.headers.get("location");
+    if (!next) break;
+    link = new URL(next, u.href).href;
+  }
+  return bad("We couldn't find a pin in that link. Drop a pin in Google Maps, tap Share, and copy the link.");
+}
+
 export async function handleStore(request, env, pathname) {
+  if (pathname === "/api/store/map-link" && request.method === "GET") return resolveMapLink(new URL(request.url).searchParams.get("url"));
   if (pathname === "/api/store/stores" && request.method === "GET") return listStores(env);
   if (pathname === "/api/store/menu" && request.method === "GET") return menu(env);
   if (pathname === "/api/store/orders" && request.method === "POST") return placeOrder(request, env);

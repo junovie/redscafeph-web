@@ -10,14 +10,6 @@ export function distanceKm(aLat, aLng, bLat, bLng, roadFactor = 1.25) {
 
 export const roundKm = (km) => Math.round(km * 10) / 10;
 
-export function deliveryFee(store, km) {
-  const d = store.delivery || {};
-  const base = Number(d.base_fee ?? 49);
-  const baseKm = Number(d.base_km ?? 2);
-  const perKm = Number(d.per_km ?? 10);
-  return Math.round((base + Math.max(0, Math.ceil(km - baseKm)) * perKm) * 100) / 100;
-}
-
 export function linePrice(product, option, modifiers, chosen) {
   let unit = product.price + (option ? option.price : product.base_extra || 0);
   for (const m of modifiers) {

@@ -1,4 +1,5 @@
 import { handleStore } from "./store.js";
+import { handleRider } from "./rider.js";
 
 const LOCATIONS = ["Red's Cafe", "Red's Cafe Too", "Also Red's Cafe"];
 const MAX_PER_HOUR = 3;
@@ -92,6 +93,10 @@ export default {
         if (request.method === "GET") return await listPublic(env);
         if (request.method === "POST") return await submit(request, env);
         return json({ error: "Method not allowed" }, 405);
+      }
+      if (pathname.startsWith("/api/rider/")) {
+        const res = await handleRider(request, env, pathname);
+        if (res) return res;
       }
       if (pathname.startsWith("/api/store/")) {
         const res = await handleStore(request, env, pathname);

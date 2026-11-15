@@ -8,6 +8,7 @@ import Reviews from "@/pages/Reviews";
 import NotFound from "@/pages/NotFound";
 import Order from "@/pages/Order";
 import OrderStatus from "@/pages/OrderStatus";
+import Rider from "@/pages/Rider";
 import { IS_STORE_HOST } from "@/data/site";
 
 export default function App() {
@@ -18,6 +19,7 @@ export default function App() {
         <Route path="menu" element={<Menu />} />
         <Route path="order" element={<Order />} />
         <Route path="order/:token" element={<OrderStatus />} />
+        <Route path="rider/:token" element={<Rider />} />
         <Route path="rewards" element={<Rewards />} />
         <Route path="this-is-us" element={<About />} />
         <Route path="reviews" element={<Reviews />} />

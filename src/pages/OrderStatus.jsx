@@ -64,6 +64,11 @@ export default function OrderStatus() {
         {cancelled ? order.status_note || "The store couldn't take this order." : steps[Math.max(0, at)][2]}
         {!cancelled && order.status_note ? ` ${order.status_note}` : ""}
       </p>
+      {order.fulfillment === "delivery" && order.rider_name && ["accepted", "ready"].includes(order.status) && (
+        <p className="mt-3 text-paper/80">
+          {order.status === "ready" ? `${order.rider_name} picked up your order and is on the way.` : `Your rider is ${order.rider_name}. They'll pick up your order once it's ready.`}
+        </p>
+      )}
 
       {!cancelled && (
         <ol className="mt-8 grid grid-cols-4 gap-2">
