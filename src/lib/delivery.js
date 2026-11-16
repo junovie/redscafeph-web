@@ -1,10 +1,11 @@
 // Delivery area and fee rules, shared by the checkout page and the worker so both quote the same fee.
-// Fees follow Maxim's Cebu bike-delivery tariff. City boundaries are OpenStreetMap's Cebu City and
-// Mandaue City outlines ([lng, lat] rings).
+// Fees match Maxim's Cebu motorcycle prices by road distance. City boundaries are OpenStreetMap's
+// Cebu City and Mandaue City outlines ([lng, lat] rings).
 import AREAS from "./cebuCities.js";
 
 export const COD_MAX = 500;
-export const ROAD_FACTOR = 1.25;
+// Straight line to road distance, used only when Google's road distance isn't available.
+export const ROAD_FACTOR = 1.3;
 export const INTERCITY_MAX_KM = 30;
 export const PAID_METHODS = ["maya", "maya_qr", "qrph"];
 export const AREA_LABEL = { cebu_city: "Cebu City", mandaue: "Mandaue City" };
@@ -35,21 +36,15 @@ export function distanceKm(aLat, aLng, bLat, bLng, roadFactor = ROAD_FACTOR) {
   return 2 * 6371 * Math.asin(Math.sqrt(h)) * roadFactor;
 }
 
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-
-// City: ₱10 covers 0.22 km, ₱23/km up to 1 km, ₱10/km up to 6 km, ₱9/km after.
-export function cityFee(km) {
-  return Math.round(10 + 23 * clamp(km - 0.22, 0, 0.78) + 10 * clamp(km - 1, 0, 5) + 9 * Math.max(0, km - 6));
+// ₱14 + ₱12/km for the first 6 road km, then ₱9.30/km (fitted to Maxim quotes, Nov 2026).
+export function deliveryFee(km) {
+  return Math.round(14 + 12 * Math.min(km, 6) + 9.3 * Math.max(0, km - 6));
 }
 
-// Intercity (one way): ₱35 covers 1 km, ₱15/km after.
-export function intercityFee(km) {
-  return Math.round(35 + 15 * Math.max(0, km - 1));
-}
-
-// Fee and rules for a pin. intercity orders must be paid online (no COD) and stay within INTERCITY_MAX_KM.
-export function deliveryQuote(store, lat, lng) {
-  const km = Math.round(distanceKm(store.latitude, store.longitude, lat, lng) * 10) / 10;
+// Fee and rules for a pin. roadKm is Google's road distance; without it the straight line is scaled
+// by ROAD_FACTOR. Outside both cities orders must be paid online (no COD) and stay within INTERCITY_MAX_KM.
+export function deliveryQuote(store, lat, lng, roadKm = null) {
+  const km = Math.round((roadKm ?? distanceKm(store.latitude, store.longitude, lat, lng)) * 10) / 10;
   const area = deliveryArea(lat, lng);
   const intercity = !area;
   return {
@@ -57,7 +52,7 @@ export function deliveryQuote(store, lat, lng) {
     area,
     intercity,
     tooFar: intercity && km > INTERCITY_MAX_KM,
-    fee: intercity ? intercityFee(km) : cityFee(km),
+    fee: deliveryFee(km),
   };
 }
 

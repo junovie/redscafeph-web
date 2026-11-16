@@ -31,7 +31,7 @@ export function defaultChoices(modifiers) {
 export async function api(path, opts) {
   const res = await fetch(path, opts);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "Something went wrong. Please try again.");
+  if (!res.ok) throw Object.assign(new Error(data.error || "Something went wrong. Please try again."), { data });
   return data;
 }
 
