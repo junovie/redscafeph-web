@@ -98,6 +98,7 @@ export default function Order() {
     return (
       <Checkout
         store={store}
+        menu={menu}
         lines={cart}
         setQty={setQty}
         mapsKey={config.maps_key}

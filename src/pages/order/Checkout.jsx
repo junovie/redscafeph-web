@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, LocateFixed, Minus, Plus } from "lucide-react";
 import { api, peso, shrinkImage } from "@/lib/store";
 import { AREA_LABEL, COD_MAX, codAllowed, deliveryQuote } from "@/lib/delivery";
+import { ID_KINDS, MAX_IDS, discountBase, idDiscount } from "@/lib/discount";
 import MapPin from "@/pages/order/MapPin";
 
-export default function Checkout({ store, lines, setQty, mapsKey, location, locating, requestLocation, onBack, onPlaced }) {
+export default function Checkout({ store, menu, lines, setQty, mapsKey, location, locating, requestLocation, onBack, onPlaced }) {
   const [fulfillment, setFulfillment] = useState(store.allow_delivery ? "delivery" : "pickup");
   const [form, setForm] = useState(() => JSON.parse(localStorage.getItem("rc-customer") || "{}"));
   const [payment, setPayment] = useState("");
@@ -13,6 +14,8 @@ export default function Checkout({ store, lines, setQty, mapsKey, location, loca
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [pin, setPin] = useState(location);
+  const [discountKind, setDiscountKind] = useState("");
+  const [idPhotos, setIdPhotos] = useState([]);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   useEffect(() => {
     if (location) setPin(location);
@@ -42,7 +45,21 @@ export default function Checkout({ store, lines, setQty, mapsKey, location, loca
   const tooFar = !!quote?.tooFar;
   const intercity = !!quote?.intercity;
   const fee = quote && !tooFar ? quote.fee : 0;
-  const total = Math.round((subtotal + fee) * 100) / 100;
+  const rules = menu?.id_discounts || {};
+  const rule = discountKind ? rules[discountKind] : null;
+  const discount =
+    rule && idPhotos.length
+      ? idDiscount(
+          lines.map((l) => {
+            const p = menu.products.find((x) => x.id === l.product_id);
+            return { product_id: l.product_id, category_id: p?.category_id, kind: p?.kind, quantity: l.quantity, discount_base: discountBase(l.unit_price, l.modifiers, menu.modifiers) };
+          }),
+          rule,
+          idPhotos.length,
+        )
+      : null;
+  const discountAmount = discount?.total || 0;
+  const total = Math.round((subtotal - discountAmount + fee) * 100) / 100;
   const codOk = codAllowed(total) && !intercity;
   const pay = payment === "cod" && !codOk ? "" : payment;
 
@@ -59,16 +76,31 @@ export default function Checkout({ store, lines, setQty, mapsKey, location, loca
     }
   };
 
+  const pickId = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const photo = await shrinkImage(file, 1200);
+      setIdPhotos((p) => [...p, photo].slice(0, MAX_IDS));
+      setError("");
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const place = async () => {
     setError("");
     if (fulfillment === "delivery" && !pin) return setError("Turn on your location and set your pin so we know where to deliver.");
     if (!pay) return setError("Please choose how you'll pay.");
+    if (discountKind && !idPhotos.length) return setError("Please upload a photo of each ID, or choose No discount.");
+    if (discountKind && !discountAmount) return setError(`None of your items get the ${ID_KINDS[discountKind]} discount. Choose No discount to continue.`);
     if (pay === "qrph" && !proof) return setError("Please upload your GCash payment screenshot.");
     if (pay === "qrph" && proofTotal !== total) return setError(`Your total changed to ${peso(total)} after you uploaded a receipt for ${peso(proofTotal)}. Upload a receipt for ${peso(total)}, or change your order back.`);
     setBusy(true);
     try {
-      const { name, phone, email, address, address_notes } = form;
-      localStorage.setItem("rc-customer", JSON.stringify({ name, phone, email, address, address_notes }));
+      const { name, phone, email, address, address_notes, loyalty_phone } = form;
+      localStorage.setItem("rc-customer", JSON.stringify({ name, phone, email, address, address_notes, loyalty_phone }));
       const res = await api("/api/store/orders", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -86,6 +118,9 @@ export default function Checkout({ store, lines, setQty, mapsKey, location, loca
           payment_method: pay,
           payment_reference: form.payment_reference,
           payment_proof: pay === "qrph" ? proof : undefined,
+          discount_kind: discountKind || undefined,
+          id_photos: discountKind ? idPhotos : undefined,
+          loyalty_phone,
           items: lines.map((l) => ({ product_id: l.product_id, recipe_id: l.recipe_id, modifiers: l.modifiers, quantity: l.quantity, note: l.note })),
           expected_total: total,
           expected_fee: fulfillment === "delivery" ? fee : undefined,
@@ -183,10 +218,54 @@ export default function Checkout({ store, lines, setQty, mapsKey, location, loca
         <div className="space-y-4">
           <Field label="Name" value={form.name} onChange={set("name")} max={60} autoComplete="name" />
           <Field label="Mobile number" value={form.phone} onChange={set("phone")} placeholder="0917 123 4567" type="tel" autoComplete="tel" max={16} />
+          <Field label="Loyalty number" value={form.loyalty_phone} onChange={set("loyalty_phone")} placeholder="Optional: mobile no. on your Red's loyalty account" type="tel" max={16} />
           <Field label="Notes for the store" value={form.notes} onChange={set("notes")} placeholder="Optional" max={300} />
           <input className="hidden" tabIndex={-1} autoComplete="off" value={form.website || ""} onChange={set("website")} aria-hidden="true" />
         </div>
       </Block>
+
+      {Object.keys(rules).length > 0 && (
+        <Block title="Senior, PWD or student discount">
+          <div className="space-y-2">
+            <PayOption id="" active={!discountKind} onClick={setDiscountKind} label="No discount" />
+            {Object.keys(ID_KINDS)
+              .filter((k) => rules[k])
+              .map((k) => (
+                <PayOption key={k} id={k} active={discountKind === k} onClick={setDiscountKind} label={ID_KINDS[k]} hint={`${rules[k].percent}% off`} />
+              ))}
+          </div>
+          {rule && (
+            <div className="mt-4 border border-white/10 p-4 text-sm text-paper/70">
+              <p>Each ID gets {rule.percent}% off 1 food and 1 drink (the most expensive of each). Upload a clear photo of each ID, front side, one per person.</p>
+              <p className="mt-2">The store checks the IDs before accepting. If an ID isn&apos;t valid, the order is cancelled and we&apos;ll text you why.</p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                {idPhotos.map((src, i) => (
+                  <div key={i} className="relative">
+                    <img src={src} alt={`ID ${i + 1}`} className="h-20 w-28 object-cover" />
+                    <button type="button" onClick={() => setIdPhotos((p) => p.filter((_, j) => j !== i))} className="absolute right-0 top-0 bg-black/70 px-1.5 text-xs" aria-label={`Remove ID ${i + 1}`}>
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {idPhotos.length < MAX_IDS && (
+                <label className="btn-outline mt-4 w-full cursor-pointer px-4">
+                  {idPhotos.length ? "Add another ID" : "Upload ID photo"}
+                  <input type="file" accept="image/*" className="hidden" onChange={pickId} />
+                </label>
+              )}
+              {idPhotos.length > 0 && (
+                <p className="mt-3">
+                  {discountAmount > 0
+                    ? `${idPhotos.length} ID${idPhotos.length > 1 ? "s" : ""}: you save ${peso(discountAmount)}.`
+                    : `None of your items get the ${ID_KINDS[discountKind]} discount.`}
+                </p>
+              )}
+            </div>
+          )}
+        </Block>
+      )}
+
 
       <Block title="Payment">
         <div className="space-y-2">
@@ -215,6 +294,7 @@ export default function Checkout({ store, lines, setQty, mapsKey, location, loca
 
       <div className="mt-8 space-y-1 border-t border-white/10 pt-5 text-sm">
         <Row label="Subtotal" value={peso(subtotal)} />
+        {discountAmount > 0 && <Row label={`${ID_KINDS[discountKind]} discount`} value={`−${peso(discountAmount)}`} />}
         {fulfillment === "delivery" && <Row label="Delivery fee" value={!pin ? "Set your pin" : quoting ? "Checking…" : peso(fee)} />}
         <Row label="Total" value={peso(total)} strong />
       </div>
