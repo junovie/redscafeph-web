@@ -214,16 +214,31 @@ function publicStore(s) {
 
 const ROUTES = "https://routes.googleapis.com/directions/v2:computeRoutes";
 const ROUTE_CACHE_SECONDS = 30 * 86400;
+const ROUTE_LOOKUPS_PER_HOUR = 20;
 
-// Google's driving distance in km from the store to the pin, cached per store and pin, or null
-// (no key, pin far beyond the delivery limit, or Google failed) so the caller estimates instead.
-async function roadKm(env, store, lat, lng) {
+// Rough per-IP cap on Google lookups (per Cloudflare location); past it the caller estimates instead.
+async function routeLookupAllowed(cache, request, env) {
+  if (!cache) return true;
+  const ip = await sha256(`${request.headers.get("cf-connecting-ip") || "local"}:route:${env.SUPABASE_SERVICE_ROLE_KEY}`);
+  const key = new Request(`https://route-cache.redscafeph.com/limit/${ip}/${Math.floor(Date.now() / 3600_000)}`);
+  const used = Number(await (await cache.match(key).catch(() => null))?.text()) || 0;
+  if (used >= ROUTE_LOOKUPS_PER_HOUR) return false;
+  await cache.put(key, new Response(String(used + 1), { headers: { "cache-control": "max-age=3600" } })).catch(() => {});
+  return true;
+}
+
+// Google's driving distance in km from the store to the pin (snapped to ~11 m), cached per store and
+// pin, or null (no key, pin beyond the delivery limit, lookup cap hit, or Google failed) so the caller estimates.
+async function roadKm(request, env, store, pinLat, pinLng) {
+  const lat = Math.round(pinLat * 1e4) / 1e4;
+  const lng = Math.round(pinLng * 1e4) / 1e4;
   const key = env.GOOGLE_ROUTES_KEY;
   if (!key || distanceKm(store.latitude, store.longitude, lat, lng, 1) > INTERCITY_MAX_KM) return null;
-  const cacheKey = new Request(`https://route-cache.redscafeph.com/${store.branch_id}/${store.latitude},${store.longitude}/${lat.toFixed(5)},${lng.toFixed(5)}`);
+  const cacheKey = new Request(`https://route-cache.redscafeph.com/${store.branch_id}/${store.latitude},${store.longitude}/${lat},${lng}`);
   const cache = typeof caches !== "undefined" ? caches.default : null;
   const hit = await cache?.match(cacheKey).catch(() => null);
   if (hit) return Number(await hit.text());
+  if (!(await routeLookupAllowed(cache, request, env))) return null;
   try {
     const point = (latitude, longitude) => ({ location: { latLng: { latitude, longitude } } });
     const res = await fetch(ROUTES, {
@@ -251,7 +266,7 @@ function readPin(body) {
   return { lat, lng };
 }
 
-const deliveryQuoteFor = async (env, store, { lat, lng }) => deliveryQuote(store, lat, lng, await roadKm(env, store, lat, lng));
+const deliveryQuoteFor = async (request, env, store, { lat, lng }) => deliveryQuote(store, lat, lng, await roadKm(request, env, store, lat, lng));
 
 async function quoteDelivery(request, env) {
   const body = await request.json().catch(() => ({}));
@@ -259,7 +274,7 @@ async function quoteDelivery(request, env) {
   if (!pin) return bad("Please set your pin.");
   const store = (await loadStores(env)).find((s) => s.branch_id === body.store_id);
   if (!store) return bad("Please pick a store.");
-  return json(await deliveryQuoteFor(env, store, pin));
+  return json(await deliveryQuoteFor(request, env, store, pin));
 }
 
 async function listStores(env) {
@@ -433,13 +448,17 @@ async function placeOrder(request, env) {
     ({ lat, lng } = pin);
     if (!address) return bad("Please enter your delivery address.");
     // Outside Cebu City and Mandaue City the order must be paid online first.
-    const quote = await deliveryQuoteFor(env, store, pin);
+    const quote = await deliveryQuoteFor(request, env, store, pin);
     distance = quote.km;
     if (quote.tooFar) return bad(`You're about ${distance} km from ${store.display_name}. Outside ${AREA_LABEL.cebu_city} and ${AREA_LABEL.mandaue} we deliver up to ${INTERCITY_MAX_KM} km. Try a nearer store or pickup.`);
     if (quote.intercity && !PAID_METHODS.includes(method)) {
       return bad(`Your pin is outside ${AREA_LABEL.cebu_city} and ${AREA_LABEL.mandaue}, so please pay online or with QR. Cash on delivery is only inside the two cities.`);
     }
     fee = quote.fee;
+    // The fee can differ from the one shown if Google's distance wasn't available for one of the two lookups.
+    if (!paidQr && body.expected_fee != null && Math.abs(Number(body.expected_fee) - fee) > 0.01) {
+      return json({ error: `The delivery fee is now ₱${fee}. Please check your total and place the order again.`, delivery_quote: quote }, 409);
+    }
   }
 
   const catalog = await loadCatalog(env);

@@ -88,6 +88,7 @@ export default function Checkout({ store, lines, setQty, mapsKey, location, loca
           payment_proof: pay === "qrph" ? proof : undefined,
           items: lines.map((l) => ({ product_id: l.product_id, recipe_id: l.recipe_id, modifiers: l.modifiers, quantity: l.quantity, note: l.note })),
           expected_total: total,
+          expected_fee: fulfillment === "delivery" ? fee : undefined,
           website: form.website,
         }),
       });
@@ -98,6 +99,7 @@ export default function Checkout({ store, lines, setQty, mapsKey, location, loca
       }
       onPlaced(res.token);
     } catch (err) {
+      if (err.data?.delivery_quote) setQuote(err.data.delivery_quote);
       setError(err.message);
       setBusy(false);
     }
