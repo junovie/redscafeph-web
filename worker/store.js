@@ -642,7 +642,6 @@ async function orderStatus(env, token) {
   return json({
     ...rest,
     discount_label: o.discount_kind ? ID_KINDS[o.discount_kind] : null,
-    loyalty_linked: !!o.loyalty_customer_id,
     items: (o.items || []).map((l) => ({
       discount_qty: l.discount_qty || 0,
       name: l.product_name,

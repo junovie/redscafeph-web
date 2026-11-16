@@ -108,7 +108,7 @@ export default function OrderStatus() {
           {order.fulfillment === "delivery" && <Row label="Delivery fee" value={peso(order.delivery_fee)} />}
           <Row label="Total" value={peso(order.total)} strong />
           <Row label="Payment" value={order.payment_method === "cod" ? "Cash on delivery / pickup" : order.payment_method === "maya" || order.payment_method === "maya_qr" ? (order.payment_status === "paid" ? (order.payment_method === "maya_qr" ? "Paid by QR Ph" : "Paid online") : "Online payment not completed") : order.payment_status === "paid" ? "GCash, confirmed" : "GCash, being checked"} />
-          {order.loyalty_phone && <Row label="Loyalty" value={order.loyalty_linked ? `Points go to ${order.loyalty_phone}` : `No account found for ${order.loyalty_phone}`} />}
+          {order.loyalty_phone && <Row label="Loyalty" value={`Points go to ${order.loyalty_phone} if it has a Red's account`} />}
         </dl>
         {order.discount_label && order.status === "new" && <p className="mt-4 text-sm text-paper/60">The store checks your ID before accepting. If it isn't valid, the order is cancelled and we'll text you why.</p>}
       </div>
