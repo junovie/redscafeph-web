@@ -2,7 +2,7 @@
 // Everything runs with the service role key, so every input is validated and every price
 // is recomputed here from the POS data, never trusted from the browser.
 
-import { AREA_LABEL, COD_MAX, INTERCITY_MAX_KM, PAID_METHODS, ROAD_FACTOR, codAllowed, deliveryQuote } from "../src/lib/delivery.js";
+import { AREA_LABEL, COD_MAX, INTERCITY_MAX_KM, PAID_METHODS, ROAD_FACTOR, codAllowed, deliveryQuote, distanceKm } from "../src/lib/delivery.js";
 
 const MAX_ORDERS_PER_HOUR = 5;
 const HIDDEN_CATEGORIES = /^(grab\b|employee only|misc charges)/i;
@@ -212,6 +212,56 @@ function publicStore(s) {
   };
 }
 
+const ROUTES = "https://routes.googleapis.com/directions/v2:computeRoutes";
+const ROUTE_CACHE_SECONDS = 30 * 86400;
+
+// Google's driving distance in km from the store to the pin, cached per store and pin, or null
+// (no key, pin far beyond the delivery limit, or Google failed) so the caller estimates instead.
+async function roadKm(env, store, lat, lng) {
+  const key = env.GOOGLE_ROUTES_KEY;
+  if (!key || distanceKm(store.latitude, store.longitude, lat, lng, 1) > INTERCITY_MAX_KM) return null;
+  const cacheKey = new Request(`https://route-cache.redscafeph.com/${store.branch_id}/${store.latitude},${store.longitude}/${lat.toFixed(5)},${lng.toFixed(5)}`);
+  const cache = typeof caches !== "undefined" ? caches.default : null;
+  const hit = await cache?.match(cacheKey).catch(() => null);
+  if (hit) return Number(await hit.text());
+  try {
+    const point = (latitude, longitude) => ({ location: { latLng: { latitude, longitude } } });
+    const res = await fetch(ROUTES, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": key, "x-goog-fieldmask": "routes.distanceMeters" },
+      body: JSON.stringify({ origin: point(store.latitude, store.longitude), destination: point(lat, lng), travelMode: "DRIVE" }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(`Routes API: ${res.status} ${(await res.text()).slice(0, 300)}`);
+    const meters = (await res.json()).routes?.[0]?.distanceMeters;
+    if (!Number.isFinite(meters)) return null;
+    const km = meters / 1000;
+    await cache?.put(cacheKey, new Response(String(km), { headers: { "cache-control": `max-age=${ROUTE_CACHE_SECONDS}` } })).catch(() => {});
+    return km;
+  } catch (e) {
+    console.error(e);
+    return null;
+  }
+}
+
+function readPin(body) {
+  const lat = Number(body.latitude);
+  const lng = Number(body.longitude);
+  if (body.latitude == null || body.longitude == null || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat, lng };
+}
+
+const deliveryQuoteFor = async (env, store, { lat, lng }) => deliveryQuote(store, lat, lng, await roadKm(env, store, lat, lng));
+
+async function quoteDelivery(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const pin = readPin(body);
+  if (!pin) return bad("Please set your pin.");
+  const store = (await loadStores(env)).find((s) => s.branch_id === body.store_id);
+  if (!store) return bad("Please pick a store.");
+  return json(await deliveryQuoteFor(env, store, pin));
+}
+
 async function listStores(env) {
   const stores = await loadStores(env);
   return json({ stores: stores.map(publicStore), cod_limit: COD_MAX, road_factor: ROAD_FACTOR, maps_key: env.GOOGLE_MAPS_KEY || null });
@@ -378,15 +428,12 @@ async function placeOrder(request, env) {
   const address = clean(body.address, 300);
   if (fulfillment === "delivery") {
     if (store.allow_delivery === false) return bad(`${store.display_name} doesn't deliver right now. Please choose pickup.`);
-    lat = Number(body.latitude);
-    lng = Number(body.longitude);
-    if (body.latitude == null || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
-      return bad("Please share your location so we know where to deliver.");
-    }
+    const pin = readPin(body);
+    if (!pin) return bad("Please share your location so we know where to deliver.");
+    ({ lat, lng } = pin);
     if (!address) return bad("Please enter your delivery address.");
-    // Anywhere in Cebu City or Mandaue City is delivered at the city rate. Outside them, the
-    // intercity rate applies and the order must be paid online first.
-    const quote = deliveryQuote(store, lat, lng);
+    // Outside Cebu City and Mandaue City the order must be paid online first.
+    const quote = await deliveryQuoteFor(env, store, pin);
     distance = quote.km;
     if (quote.tooFar) return bad(`You're about ${distance} km from ${store.display_name}. Outside ${AREA_LABEL.cebu_city} and ${AREA_LABEL.mandaue} we deliver up to ${INTERCITY_MAX_KM} km. Try a nearer store or pickup.`);
     if (quote.intercity && !PAID_METHODS.includes(method)) {
@@ -542,6 +589,7 @@ export async function handleStore(request, env, pathname) {
   if (pathname === "/api/store/stores" && request.method === "GET") return listStores(env);
   if (pathname === "/api/store/menu" && request.method === "GET") return menu(env);
   if (pathname === "/api/store/orders" && request.method === "POST") return placeOrder(request, env);
+  if (pathname === "/api/store/delivery-quote" && request.method === "POST") return quoteDelivery(request, env);
   if (pathname === "/api/store/maya-webhook" && request.method === "POST") return mayaWebhook(request, env);
   const m = /^\/api\/store\/orders\/([^/]+)$/.exec(pathname);
   if (m && request.method === "GET") return orderStatus(env, m[1]);

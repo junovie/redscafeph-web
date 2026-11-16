@@ -19,7 +19,26 @@ export default function Checkout({ store, lines, setQty, mapsKey, location, loca
   }, [location]);
 
   const subtotal = lines.reduce((s, l) => s + l.unit_price * l.quantity, 0);
-  const quote = fulfillment === "delivery" && pin ? deliveryQuote(store, pin.lat, pin.lng) : null;
+  const [quote, setQuote] = useState(null);
+  const quoting = fulfillment === "delivery" && !!pin && !quote;
+  useEffect(() => {
+    setQuote(null);
+    if (fulfillment !== "delivery" || !pin) return;
+    let live = true;
+    const t = setTimeout(() => {
+      api("/api/store/delivery-quote", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ store_id: store.id, latitude: pin.lat, longitude: pin.lng }),
+      })
+        .catch(() => deliveryQuote({ latitude: store.latitude, longitude: store.longitude }, pin.lat, pin.lng))
+        .then((q) => live && setQuote(q));
+    }, 400);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [fulfillment, pin, store.id, store.latitude, store.longitude]);
   const tooFar = !!quote?.tooFar;
   const intercity = !!quote?.intercity;
   const fee = quote && !tooFar ? quote.fee : 0;
@@ -134,12 +153,13 @@ export default function Checkout({ store, lines, setQty, mapsKey, location, loca
             <p className="mt-3 text-sm text-paper/70">For delivery, turn on location services for this site, then tap the button above. Without it you can still choose pickup.</p>
           )}
           {location && <MapPin mapsKey={mapsKey} pin={pin} onPin={setPin} />}
+          {quoting && <p className="mt-3 text-sm text-paper/70">Checking the road distance…</p>}
           {quote && (
             <p className={`mt-3 text-sm ${tooFar ? "text-red-brand" : "text-paper/70"}`}>
               {tooFar
                 ? `Your pin is about ${quote.km} km away, too far for ${store.name}. Try another store or pickup.`
                 : intercity
-                  ? `Your pin is outside ${AREA_LABEL.cebu_city} and ${AREA_LABEL.mandaue}, about ${quote.km} km from ${store.name}. Out-of-city delivery is ${peso(fee)} and must be paid online or by QR.`
+                  ? `Your pin is outside ${AREA_LABEL.cebu_city} and ${AREA_LABEL.mandaue}, about ${quote.km} km from ${store.name}. Delivery fee ${peso(fee)}, paid online or by QR.`
                   : `About ${quote.km} km from ${store.name}. Delivery fee ${peso(fee)}.`}
             </p>
           )}
@@ -193,11 +213,11 @@ export default function Checkout({ store, lines, setQty, mapsKey, location, loca
 
       <div className="mt-8 space-y-1 border-t border-white/10 pt-5 text-sm">
         <Row label="Subtotal" value={peso(subtotal)} />
-        {fulfillment === "delivery" && <Row label="Delivery fee" value={pin ? peso(fee) : "Set your pin"} />}
+        {fulfillment === "delivery" && <Row label="Delivery fee" value={!pin ? "Set your pin" : quoting ? "Checking…" : peso(fee)} />}
         <Row label="Total" value={peso(total)} strong />
       </div>
       {error && <p className="mt-4 text-sm text-red-brand">{error}</p>}
-      <button className="btn-solid mt-6 w-full" onClick={place} disabled={busy || tooFar || !lines.length || (fulfillment === "delivery" && !pin)}>
+      <button className="btn-solid mt-6 w-full" onClick={place} disabled={busy || tooFar || quoting || !lines.length || (fulfillment === "delivery" && !pin)}>
         {busy ? "Placing order…" : `Place order · ${peso(total)}`}
       </button>
     </section>
