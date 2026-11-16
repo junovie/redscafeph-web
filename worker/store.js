@@ -3,6 +3,7 @@
 // is recomputed here from the POS data, never trusted from the browser.
 
 import { AREA_LABEL, COD_MAX, INTERCITY_MAX_KM, PAID_METHODS, ROAD_FACTOR, codAllowed, deliveryQuote, distanceKm } from "../src/lib/delivery.js";
+import { ID_KINDS, MAX_IDS, discountBase, idDiscount } from "../src/lib/discount.js";
 
 const MAX_ORDERS_PER_HOUR = 5;
 const HIDDEN_CATEGORIES = /^(grab\b|employee only|misc charges)/i;
@@ -149,7 +150,7 @@ async function createMayaCheckout(keys, order, origin) {
       totalAmount: { value: order.total, currency: "PHP" },
       buyer: { firstName: order.customer_name, contact: { phone: order.customer_phone, ...(order.customer_email ? { email: order.customer_email } : {}) } },
       items: [
-        ...order.items.map((l) => ({ name: l.product_name.slice(0, 100), quantity: l.quantity, totalAmount: { value: l.line_total } })),
+        ...order.items.map((l) => ({ name: l.product_name.slice(0, 100), quantity: l.quantity, totalAmount: { value: round2(l.line_total - (l.discount_amount || 0)) } })),
         ...(order.delivery_fee ? [{ name: "Delivery fee", quantity: 1, totalAmount: { value: order.delivery_fee } }] : []),
       ],
       redirectUrl: { success: `${back}?paid=1`, failure: `${back}?paid=0`, cancel: `${back}?paid=0` },
@@ -294,11 +295,12 @@ function modifierApplies(m, product) {
 
 async function loadCatalog(env) {
   const c = companyId(env);
-  const [categories, products, recipes, modifiers] = await Promise.all([
+  const [categories, products, recipes, modifiers, discountTypes] = await Promise.all([
     rows(env, `category?select=id,name,sort_order,is_active&company_id=eq.${c}&order=sort_order`),
-    rows(env, `product?select=id,name,category_id,price,description,image_url,labels,is_employee_only,is_addon_only,open_price&company_id=eq.${c}&is_active=eq.true&order=name`),
+    rows(env, `product?select=id,name,category_id,type,price,description,image_url,labels,is_employee_only,is_addon_only,open_price&company_id=eq.${c}&is_active=eq.true&order=name`),
     rows(env, `recipe?select=id,product_id,name,option_name,price&company_id=eq.${c}`),
-    rows(env, `modifier?select=id,name,options,apply_to_labels,apply_to_categories,exclude_product_ids,is_required,allow_multiple&company_id=eq.${c}&is_active=eq.true`),
+    rows(env, `modifier?select=id,name,options,apply_to_labels,apply_to_categories,exclude_product_ids,is_required,allow_multiple,include_in_discounts&company_id=eq.${c}&is_active=eq.true`),
+    rows(env, `discount_type?select=name,discount_type,discount_value,applicable_category_ids,excluded_category_ids,excluded_product_ids,is_active&company_id=eq.${c}`),
   ]);
   const cats = categories.filter((x) => x.is_active !== false && !HIDDEN_CATEGORIES.test(x.name || ""));
   const catIds = new Set(cats.map((x) => x.id));
@@ -307,13 +309,37 @@ async function loadCatalog(env) {
   );
   const optionsByProduct = {};
   for (const r of recipes) (optionsByProduct[r.product_id] ||= []).push(r);
-  return { cats, prods, optionsByProduct, modifiers };
+  return { cats, prods, optionsByProduct, modifiers, idRules: idRules(discountTypes) };
 }
 
+// The POS's Senior Citizen/PWD and Student discount types, as rules for online orders.
+function idRules(types) {
+  const pick = (re) => {
+    const d = types.find((t) => t.is_active !== false && t.discount_type === "percentage" && re.test(t.name || ""));
+    if (!d || !(Number(d.discount_value) > 0)) return null;
+    return {
+      name: d.name,
+      percent: Number(d.discount_value),
+      applicable_category_ids: d.applicable_category_ids || [],
+      excluded_category_ids: d.excluded_category_ids || [],
+      excluded_product_ids: d.excluded_product_ids || [],
+    };
+  };
+  return { sc_pwd: pick(/senior|pwd/i), student: pick(/student/i) };
+}
+
+const productKind = (p) => (p.type === "food" || p.type === "drink" ? p.type : null);
+const publicModifier = (m) => ({
+  id: m.id,
+  no_discount: m.include_in_discounts === false,
+  options: (m.options || []).filter((o) => o?.label).map((o) => ({ label: o.label, price: Number(o.price_adjustment || 0) })),
+});
+
 async function menu(env) {
-  const { cats, prods, optionsByProduct, modifiers } = await loadCatalog(env);
+  const { cats, prods, optionsByProduct, modifiers, idRules: rules } = await loadCatalog(env);
   const mods = modifiers.map((m) => ({
     id: m.id,
+    no_discount: m.include_in_discounts === false,
     name: m.name,
     required: !!m.is_required,
     multiple: !!m.allow_multiple,
@@ -329,6 +355,7 @@ async function menu(env) {
           id: p.id,
           name: p.name,
           category_id: p.category_id,
+          kind: productKind(p),
           price: Number(p.price || 0),
           description: p.description || "",
           image_url: p.image_url || null,
@@ -338,6 +365,7 @@ async function menu(env) {
         };
       }),
       modifiers: mods,
+      id_discounts: Object.fromEntries(Object.entries(rules).filter(([, r]) => r)),
     },
     200,
     { "cache-control": "public, max-age=60" },
@@ -380,6 +408,9 @@ function priceLines(items, catalog) {
     lines.push({
       product_id: p.id,
       product_name: p.name,
+      category_id: p.category_id,
+      kind: productKind(p),
+      discount_base: discountBase(unit, chosen, modifiers.map(publicModifier)),
       recipe_id: recipe?.id || null,
       recipe_option_name: opts.length > 1 ? recipe.option_name || recipe.name : null,
       modifiers: chosen,
@@ -465,7 +496,21 @@ async function placeOrder(request, env) {
   const priced = priceLines(body.items, catalog);
   if (priced.error) return bad(priced.error);
   const subtotal = round2(priced.lines.reduce((s, l) => s + l.line_total, 0));
-  const total = round2(subtotal + fee);
+  // Staff check the ID photos before accepting; an invalid ID gets the order cancelled.
+  const discountKind = Object.hasOwn(ID_KINDS, body.discount_kind || "") ? body.discount_kind : null;
+  const idPhotos = discountKind && Array.isArray(body.id_photos) ? body.id_photos : [];
+  let discount = null;
+  if (discountKind) {
+    const rule = catalog.idRules[discountKind];
+    if (!rule) return bad(`The ${ID_KINDS[discountKind]} discount isn't available online right now.`);
+    if (!idPhotos.length) return bad("Please upload a photo of each ID.");
+    if (idPhotos.length > MAX_IDS) return bad(`Up to ${MAX_IDS} IDs per online order. For bigger groups, please call the store.`);
+    discount = idDiscount(priced.lines, rule, idPhotos.length);
+    if (!discount.total) return bad(`None of the items in your basket get the ${ID_KINDS[discountKind]} discount.`);
+  }
+  const lines = priced.lines.map((l, i) => (discount?.lines[i].qty ? { ...l, discount_qty: discount.lines[i].qty, discount_amount: discount.lines[i].amount } : l));
+  const discountAmount = discount?.total || 0;
+  const total = round2(subtotal - discountAmount + fee);
   if (body.expected_total != null && Math.abs(Number(body.expected_total) - total) > 0.01) {
     if (paidQr) issues.push(`Customer saw ₱${Number(body.expected_total).toFixed(2)}, POS prices now give ₱${total.toFixed(2)}`);
     else return bad("Prices changed since you added these items. Please check your basket and order again.", 409);
@@ -499,6 +544,19 @@ async function placeOrder(request, env) {
     }
     if (!proofUri) return bad("Please upload your payment screenshot as a photo (JPG or PNG).");
   }
+  let idUris = null;
+  if (discountKind) {
+    try {
+      idUris = await Promise.all(idPhotos.map((photo, n) => uploadProof(env, `${id}-id${n + 1}`, photo)));
+    } catch (e) {
+      if (e.userMessage) return bad(e.userMessage);
+      throw e;
+    }
+    if (idUris.some((u) => !u)) return bad("Please upload each ID as a photo (JPG or PNG).");
+  }
+  // Points go to the member with this number. It's looked up only after the rate limit, so it can't be probed.
+  const loyaltyDigits = String(body.loyalty_phone ?? "").replace(/\D/g, "").slice(-10);
+  const member = loyaltyDigits.length === 10 ? await findLoyaltyMember(env, store.company_id, loyaltyDigits) : null;
 
   const online = method === "maya" || method === "maya_qr";
   const order = {
@@ -517,10 +575,17 @@ async function placeOrder(request, env) {
     latitude: lat,
     longitude: lng,
     distance_km: distance,
-    items: priced.lines,
+    items: lines,
     notes: clean(body.notes, 300),
     status_note: issues.join(". "),
     subtotal,
+    discount_kind: discountKind,
+    discount_id_count: discountKind ? idPhotos.length : null,
+    discount_id_uris: idUris,
+    discount_amount: discountAmount,
+    loyalty_phone: loyaltyDigits.length === 10 ? `0${loyaltyDigits}` : null,
+    loyalty_customer_id: member?.id || null,
+    loyalty_name: member?.full_name || null,
     delivery_fee: fee,
     total,
     payment_method: method,
@@ -551,11 +616,20 @@ async function placeOrder(request, env) {
   return json({ ok: true, token, order_number: order.order_number }, 201);
 }
 
+async function findLoyaltyMember(env, companyId, last10) {
+  const found = await rows(env, `loyalty_customer?select=id,full_name,phone,points_balance&company_id=eq.${companyId}&is_active=not.is.false&phone=like.*${last10.slice(-4)}&limit=200`);
+  return (
+    found
+      .filter((c) => String(c.phone || "").replace(/\D/g, "").slice(-10) === last10)
+      .sort((a, b) => (b.points_balance || 0) - (a.points_balance || 0))[0] || null
+  );
+}
+
 async function orderStatus(env, token) {
   if (!/^[a-f0-9]{64}$/.test(token)) return bad("Order not found", 404);
   const [o] = await rows(
     env,
-    `online_order?select=id,maya_checkout_url,order_number,status,status_note,fulfillment,branch_id,customer_name,address,items,subtotal,delivery_fee,total,payment_method,payment_status,created_date,accepted_at,ready_at,completed_at,cancelled_at,rider_name,rider_assigned_at,picked_up_at,delivered_at&status_token=eq.${token}&limit=1`,
+    `online_order?select=id,maya_checkout_url,order_number,status,status_note,fulfillment,branch_id,customer_name,address,items,subtotal,discount_kind,discount_id_count,discount_amount,loyalty_phone,loyalty_customer_id,delivery_fee,total,payment_method,payment_status,created_date,accepted_at,ready_at,completed_at,cancelled_at,rider_name,rider_assigned_at,picked_up_at,delivered_at&status_token=eq.${token}&limit=1`,
   );
   if (!o) return bad("Order not found", 404);
   Object.assign(o, await confirmMayaPayment(env, o));
@@ -564,9 +638,13 @@ async function orderStatus(env, token) {
   delete rest.branch_id;
   delete rest.id;
   delete rest.maya_checkout_url;
+  delete rest.loyalty_customer_id;
   return json({
     ...rest,
+    discount_label: o.discount_kind ? ID_KINDS[o.discount_kind] : null,
+    loyalty_linked: !!o.loyalty_customer_id,
     items: (o.items || []).map((l) => ({
+      discount_qty: l.discount_qty || 0,
       name: l.product_name,
       option: l.recipe_option_name,
       extras: l.modifier_labels || [],

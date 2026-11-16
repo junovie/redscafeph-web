@@ -95,16 +95,22 @@ export default function OrderStatus() {
                 {[l.option, ...l.extras].filter(Boolean).length > 0 && <span className="block text-paper/50">{[l.option, ...l.extras].filter(Boolean).join(", ")}</span>}
                 {l.note && <span className="block italic text-paper/50">“{l.note}”</span>}
               </span>
-              <span className="tabular-nums">{peso(l.line_total)}</span>
+              <span className="tabular-nums">
+                {peso(l.line_total)}
+                {l.discount_qty > 0 && <span className="block text-right text-xs text-paper/50">{l.discount_qty} with discount</span>}
+              </span>
             </li>
           ))}
         </ul>
         <dl className="mt-5 space-y-1 border-t border-white/10 pt-5 text-sm">
           <Row label="Subtotal" value={peso(order.subtotal)} />
+          {order.discount_amount > 0 && <Row label={`${order.discount_label} discount (${order.discount_id_count} ID${order.discount_id_count > 1 ? "s" : ""})`} value={`−${peso(order.discount_amount)}`} />}
           {order.fulfillment === "delivery" && <Row label="Delivery fee" value={peso(order.delivery_fee)} />}
           <Row label="Total" value={peso(order.total)} strong />
           <Row label="Payment" value={order.payment_method === "cod" ? "Cash on delivery / pickup" : order.payment_method === "maya" || order.payment_method === "maya_qr" ? (order.payment_status === "paid" ? (order.payment_method === "maya_qr" ? "Paid by QR Ph" : "Paid online") : "Online payment not completed") : order.payment_status === "paid" ? "GCash, confirmed" : "GCash, being checked"} />
+          {order.loyalty_phone && <Row label="Loyalty" value={order.loyalty_linked ? `Points go to ${order.loyalty_phone}` : `No account found for ${order.loyalty_phone}`} />}
         </dl>
+        {order.discount_label && order.status === "new" && <p className="mt-4 text-sm text-paper/60">The store checks your ID before accepting. If it isn't valid, the order is cancelled and we'll text you why.</p>}
       </div>
       <p className="mt-6 text-sm text-paper/50">This page updates by itself. Keep it open or bookmark it.</p>
       <Link to="/order" className="btn-outline mt-8">Order again</Link>
